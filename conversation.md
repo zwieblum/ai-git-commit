@@ -36,3 +36,16 @@ Updated `ensure_git_repo` so that:
 - If the path does not exist → create the directory and run `git init`.
 - If the path exists but is not a Git repository → run `git init` in place.
 - `collect_changes` now handles brand-new repositories that have no `HEAD` yet (avoids failing on `git diff HEAD`).
+
+**User:**
+
+if the new source moved the content down one directory (e.g.: git repository: program.py, in the new source: somedirectory/program.py - simillar for all other files/dirs) then the program should warn the user about the additional directory layers and stop. 
+
+if --src points to an archive (*.zip/*.tar/*.tar,gz ...), then the archive should be unpacked to a temporary directory, preceeding directories sripped , then merged to the git as intended, and then removed.
+
+**Assistant:**
+
+Added two features:
+
+1. **Extra directory layer detection** – if a plain `--src` directory wraps the content in one or more extra top-level directories that overlap with the repository root, the program prints a clear warning and exits without syncing.
+2. **Archive support** – `--src` may be a `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, etc. The archive is extracted to a temporary directory, any single leading directory layers are stripped, the content is synced as usual, and the temporary tree is removed afterwards.
