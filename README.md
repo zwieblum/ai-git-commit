@@ -299,3 +299,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 ### Branch base
 
 A new branch (derived from the archive name or `--branch`) is created from the **latest release branch** (highest leading number, e.g. `017-…`; otherwise the branch with the newest commit), not from the currently checked-out branch.
+
+### Bytecode caches
+
+`__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
