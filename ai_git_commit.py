@@ -17,10 +17,13 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
