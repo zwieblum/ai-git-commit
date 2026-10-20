@@ -438,6 +438,91 @@ def collect_changes(repo: Path) -> list[FileChange]:
     return sorted(changes.values(), key=lambda c: c.path)
 
 
+def resolve_model(base_url: str, model: str | None, api_key: str | None = None) -> str:
+    """Return *model*, or the first/default model advertised by the server.
+
+    Uses ``GET {base_url}/models`` (OpenAI-compatible).  Prefers a model marked
+    as the default/active one when the server provides such a hint; otherwise
+    uses the first entry in ``data``.
+    """
+    if model:
+        return model
+
+    url = base_url.rstrip("/") + "/models"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    def _die(msg: str) -> None:
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=API_TIMEOUT)
+    except requests.exceptions.ConnectionError as e:
+        _die(
+            f"Error: cannot reach LLM server at {url} to list models.\n"
+            f"  Provide --model explicitly, or start the server.\n"
+            f"  Detail: {e}"
+        )
+    except requests.exceptions.Timeout as e:
+        _die(
+            f"Error: LLM server at {url} timed out while listing models.\n"
+            f"  Detail: {e}"
+        )
+    except requests.exceptions.RequestException as e:
+        _die(f"Error: failed to list models from {url}: {e}")
+
+    if resp.status_code != 200:
+        _die(
+            f"Error: cannot list models (HTTP {resp.status_code}) at {url}.\n"
+            f"  Provide --model explicitly.\n"
+            f"  Response: {(resp.text or '')[:300]}"
+        )
+
+    try:
+        data = resp.json()
+    except ValueError:
+        _die(
+            f"Error: non-JSON response from {url}. Provide --model explicitly.\n"
+            f"  Body: {(resp.text or '')[:300]}"
+        )
+
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        # Some servers return a bare list
+        if isinstance(data, list) and data:
+            items = data
+        else:
+            _die(
+                f"Error: no models reported by {url}. Provide --model explicitly.\n"
+                f"  Response: {data!r}"
+            )
+
+    # Prefer an explicitly marked default/active model when present
+    chosen = None
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        mid = it.get("id") or it.get("name")
+        if not mid:
+            continue
+        if it.get("default") or it.get("active") or it.get("is_default"):
+            chosen = str(mid)
+            break
+        if chosen is None:
+            chosen = str(mid)
+
+    if not chosen:
+        _die(
+            f"Error: could not determine a model id from {url}. "
+            f"Provide --model explicitly.\n  Response: {data!r}"
+        )
+
+    print(f"No --model given – using server model '{chosen}'")
+    return chosen
+
+
 def call_llm(
     base_url: str,
     model: str,
@@ -1183,7 +1268,8 @@ def main() -> None:
             "Two modes (only --git is always required):\n"
             "\n"
             "  IMPORT  – sync --src into --git and create commits (needs LLM)\n"
-            "            requires: --git --url --model --src --name\n"
+            "            requires: --git --url --src --name\n"
+            "            optional: --model (default: first/active model from GET /v1/models)\n"
             "\n"
             "  EXPORT  – recreate a zip/tar from a branch\n"
             "            requires: --git --export [NAME]\n"
@@ -1192,6 +1278,10 @@ def main() -> None:
         epilog=(
             "examples:\n"
             "  # Import an archive (creates branch from archive name)\n"
+            "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
+            "      --src snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
+            "\n"
+            "  # Import with an explicit model\n"
             "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
             "      --model qwen2.5-coder --src snapshot-2020.zip \\\n"
             "      --name 'Botter <ai@localhost>'\n"
@@ -1224,7 +1314,7 @@ def main() -> None:
     import_opts.add_argument(
         "--model",
         default=None,
-        help="Model name, e.g. qwen2.5-coder-7b-instruct-q4_k_m",
+        help="Model name (default: first/active model from GET {url}/models)",
     )
     import_opts.add_argument(
         "--src",
@@ -1319,7 +1409,6 @@ def main() -> None:
         flag
         for flag, val in (
             ("--url", args.url),
-            ("--model", args.model),
             ("--src", args.src),
             ("--name", args.name),
         )
@@ -1328,9 +1417,11 @@ def main() -> None:
     if missing:
         raise SystemExit(
             "Import mode requires: " + ", ".join(missing) + "\n"
+            "(--model is optional; the active server model is used when omitted.)\n"
             "(Or use --export [NAME] to recreate an archive from the repo.)"
         )
 
+    args.model = resolve_model(args.url, args.model, args.api_key)
     author_name, author_email = parse_author(args.name)
 
     # Optional: refuse if there are already staged changes
