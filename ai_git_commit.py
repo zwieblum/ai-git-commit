@@ -67,11 +67,24 @@ def parse_author(name_email: str) -> tuple[str, str]:
 
 
 def ensure_git_repo(repo: Path) -> None:
+    """Ensure *repo* is a Git working tree. Create the directory and run
+    ``git init`` if it does not exist or is not yet a repository."""
+    if not repo.exists():
+        print(f"Git repository does not exist – creating {repo} …")
+        repo.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+        print(f"  initialized empty Git repository in {repo}")
+        return
+
     if not repo.is_dir():
-        raise SystemExit(f"Git repository path does not exist or is not a directory: {repo}")
+        raise SystemExit(f"Git repository path exists but is not a directory: {repo}")
+
     r = run_git(repo, "rev-parse", "--is-inside-work-tree", check=False)
     if r.returncode != 0 or r.stdout.strip() != "true":
-        raise SystemExit(f"Not a valid Git working tree: {repo}")
+        # Directory exists but is not a Git repo → init in place
+        print(f"Directory {repo} is not a Git repository – running git init …")
+        subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+        print(f"  initialized empty Git repository in {repo}")
 
 
 def sync_source_to_repo(src: Path, repo: Path) -> None:
@@ -117,23 +130,30 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             # remove empty dirs later if needed; git will handle
 
 
+def has_commits(repo: Path) -> bool:
+    """Return True if the repository has at least one commit (HEAD exists)."""
+    r = run_git(repo, "rev-parse", "--verify", "HEAD", check=False)
+    return r.returncode == 0
+
+
 def collect_changes(repo: Path) -> list[FileChange]:
     """Return list of changed files with insertion/deletion counts."""
     changes: dict[str, FileChange] = {}
 
-    # Tracked modifications / deletions / renames
-    r = run_git(repo, "diff", "--numstat", "HEAD")
-    for line in r.stdout.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        ins, dels, path = parts[0], parts[1], parts[2]
-        # handle renames: path may be "old => new"
-        if " => " in path:
-            path = path.split(" => ")[-1].strip()
-        ins_n = 0 if ins == "-" else int(ins)
-        del_n = 0 if dels == "-" else int(dels)
-        changes[path] = FileChange(path=path, status="M", insertions=ins_n, deletions=del_n)
+    # Tracked modifications / deletions / renames (only when HEAD exists)
+    if has_commits(repo):
+        r = run_git(repo, "diff", "--numstat", "HEAD")
+        for line in r.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            ins, dels, path = parts[0], parts[1], parts[2]
+            # handle renames: path may be "old => new"
+            if " => " in path:
+                path = path.split(" => ")[-1].strip()
+            ins_n = 0 if ins == "-" else int(ins)
+            del_n = 0 if dels == "-" else int(dels)
+            changes[path] = FileChange(path=path, status="M", insertions=ins_n, deletions=del_n)
 
     # Status for untracked / deleted / type
     r = run_git(repo, "status", "--porcelain", "-uall")
