@@ -2,8 +2,9 @@
 
 **User:**
 
-ensure that short help, long help and readme are in sync. "--export" does not require --uri --model --src --name
+* "--export" is not in the code - fix that. also "--export" does not require "--uri" "--model" "--src" "--name"
+* if "--model" is omitted, then it should use the active model from the server.
 
 **Assistant:**
 
-Aligned `-h` / `--help` (description, argument groups, epilog examples) with the README. Export mode needs only `--git` and `--export`; import mode needs `--git --url --model --src --name`.
+--export was already in the tree; help/README clarified again. Export mode only requires --git and --export. --model is optional on import: when omitted, GET {url}/models is used and the first/active model is selected.
