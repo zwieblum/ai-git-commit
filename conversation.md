@@ -2,12 +2,12 @@
 
 **User:**
 
-… (full feature history: LLM commits, auto-init, archives, extra-dir guard, file dates, progress, README, GPL-3, hunk split, --branch) …
+… (history of features) …
 
 **User:**
 
-when an archive is given then automatically use the archives name (without extension) as branch name. --branch overrides this.
+Add the archive name to the commit message
 
 **Assistant:**
 
-When `--src` is an archive and `--branch` is not given, the branch name is derived from the archive basename with the extension stripped (e.g. `snapshot-2020.zip` → branch `snapshot-2020`). Explicit `--branch` always wins.
+When `--src` is an archive, every generated commit message includes the archive filename (e.g. `feat: add parser (from snapshot-2020.zip)`). The model is instructed to mention it; a fallback appends `(from <archive>)` if it did not.
