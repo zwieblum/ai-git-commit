@@ -121,6 +121,30 @@ def ensure_git_repo(repo: Path) -> None:
         print(f"  initialized empty Git repository in {repo}")
 
 
+def latest_release_branch(repo: Path) -> str | None:
+    """Return the branch holding the most recent release.
+
+    Release branches are named like ``017-export-model`` (derived from archive
+    names).  The highest leading number wins; if no branch has a numeric
+    prefix, the branch whose tip has the newest committer date is used.
+    """
+    r = run_git(
+        repo, "for-each-ref", "--sort=-committerdate",
+        "--format=%(refname:short)", "refs/heads/", check=False,
+    )
+    ordered = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if not ordered:
+        return None
+    numbered = []
+    for b in ordered:
+        m = re.match(r"^(\d+)", b)
+        if m:
+            numbered.append((int(m.group(1)), b))
+    if numbered:
+        return max(numbered, key=lambda t: t[0])[1]
+    return ordered[0]
+
+
 def ensure_branch(repo: Path, branch: str) -> None:
     """Checkout *branch*, creating it if it does not exist.
 
@@ -150,10 +174,16 @@ def ensure_branch(repo: Path, branch: str) -> None:
         run_git(repo, "checkout", branch)
         return
 
-    # Create and switch
+    # Create and switch.  Base the new branch on the *latest release* branch
+    # (not on whatever HEAD happens to be, which may be an old release).
     if has_commits(repo):
-        print(f"Creating and checking out new branch '{branch}' …")
-        run_git(repo, "checkout", "-b", branch)
+        base = latest_release_branch(repo)
+        if base:
+            print(f"Creating and checking out new branch '{branch}' from latest release '{base}' …")
+            run_git(repo, "checkout", "-b", branch, base)
+        else:
+            print(f"Creating and checking out new branch '{branch}' …")
+            run_git(repo, "checkout", "-b", branch)
     else:
         # Empty repo: set the symbolic ref so the first commit lands on this branch
         print(f"Empty repository – first commit will create branch '{branch}' …")
@@ -1486,7 +1516,22 @@ def main() -> None:
     if branch:
         ensure_branch(args.git, branch)
 
+    # Safety: the sync step runs "rsync --delete" into the repo, so a source
+    # (archive or directory) located inside the repo would be deleted by it.
+    _src_abs = args.src.expanduser().resolve()
+    _repo_abs = args.git.expanduser().resolve()
+    if _src_abs == _repo_abs or _repo_abs in _src_abs.parents:
+        raise SystemExit(
+            f"Source {_src_abs} is inside the target repository {_repo_abs}; "
+            "syncing would delete it. Move the source outside the repository."
+        )
+
     with resolve_source(args.src) as effective_src:
+        if not effective_src.is_dir():
+            raise SystemExit(
+                f"Internal error: resolved source is not a directory: {effective_src} "
+                f"(from --src {args.src}). Is this the current ai_git_commit.py?"
+            )
         # Warn & abort if the (plain) source tree has extra directory layers
         # relative to the repository.  Archives are already stripped by
         # resolve_source, so this mainly protects directory inputs.
