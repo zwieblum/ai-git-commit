@@ -42,7 +42,7 @@ Optional:
 
 ## How it works
 
-1. Verifies that `--git` is a Git working tree and that nothing is currently staged.
+1. Ensures `--git` is a Git working tree. If the path does not exist (or is not yet a repository), the directory is created and `git init` is run automatically. Also refuses to proceed when something is already staged.
 2. Syncs every file from `--src` into the repo root (`.git` is never touched).
 3. Collects a list of changed paths with `git diff --numstat` and `git status --porcelain`.
 4. Sends a compact summary to the model and asks for a JSON list of commits:
