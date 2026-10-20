@@ -227,6 +227,7 @@ Rules enforced in the prompt (and cleaned up in code):
 
 - Prefer commits whose total changed lines ≤ 200.
 - Group by functional coherence.
+- Commit messages are concise but between 10 and 100 words long (enforced in code: overlong messages are truncated, too-short ones are extended with the affected file names).
 - Every changed path appears in exactly one commit.
 - Leftover paths (if the model omits any) are placed in a final catch-all commit.
 
