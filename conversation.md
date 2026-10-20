@@ -2,11 +2,11 @@
 
 **User:**
 
-i need a program that creates commits the differences from a new local directory to a local git repository. it should take a openapi style URL (e.g. --url http://llamaserver:8080/v1), a model name ( e.g. --model qwen3.5-coder), the git repository (e.g. --git here/is/the/repository), directory of the newest (non-git) local directory (e.g. --src her/is/the/new/content), the comitters email (e.g. --name "Botter <the-great-ai@localhost.at>"). the model should write the description for the git commits. code blocks in one commit should be at most 200 lines, bigger changes need to be broken up into functionally coherent blocks.
+i need a program that creates commits the differences from a new local directory to a local git repository. … model should write the description … code blocks in one commit at most 200 lines …
 
 **Assistant:**
 
-Created initial program with LLM commit messages, ≤200-line grouping, rsync sync, etc.
+Created initial program (LLM messages, ≤200-line grouping, rsync, etc.).
 
 **User:**
 
@@ -14,7 +14,7 @@ give me a clickable downloadlink
 
 **Assistant:**
 
-Provided download for `001-ai-git-commit.zip`.
+Provided `001-ai-git-commit.zip`.
 
 **User:**
 
@@ -22,46 +22,60 @@ if the git repository does not exist, it should be created
 
 **Assistant:**
 
-Auto-create + `git init` when missing; handle repos without HEAD.
+Auto `git init` when missing.
 
 **User:**
 
-if the new source moved the content down one directory … warn and stop.
-if --src points to an archive … unpack, strip, merge, remove temp.
+extra directory layer → warn and stop; archives → unpack, strip, merge, cleanup
 
 **Assistant:**
 
-Extra-directory-layer detection; archive support with strip and cleanup.
+Implemented.
 
 **User:**
 
-the git commits must represent the file date from the file in "--src" …
+commits must use file dates from --src for chronological archive history
 
 **Assistant:**
 
-Commit dates taken from newest source-file mtime in each commit.
+Author/committer dates from newest source mtime per commit.
 
 **User:**
 
-Add a progress bar to the script
+Add a progress bar
 
 **Assistant:**
 
-Progress via `tqdm` and `rsync --info=progress2`.
+tqdm + rsync --info=progress2.
 
 **User:**
 
-add a README.md to the archive. it should also contain an extensive functional description, architecture, requrements etc.
+extensive README
 
 **Assistant:**
 
-Expanded README; packaged as `005-progress-readme.zip`.
+Expanded README; `005-progress-readme.zip`.
 
 **User:**
 
-change the license to GPL3.
-add a copyright "© Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz"
+change the license to GPL3 + copyright Dr. Nikolaus Klepp …
 
 **Assistant:**
 
-License switched to GPL-3.0-or-later. Added copyright notice to the script header, README, and a full `LICENSE` file.
+GPL-3.0-or-later + copyright; `006-gpl3-copyright.zip`.
+
+**User:**
+
+add the gpl-3.0 license file
+
+**Assistant:**
+
+Already present as `LICENSE` in the archive.
+
+**User:**
+
+one big file with a lot of changes: make the model plan the splitting in functional hunks
+
+**Assistant:**
+
+Large files (>200 changed lines) are now analysed as unified-diff hunks. The model returns groups of hunk indices with commit messages; the program applies those hunk groups sequentially as separate commits.
