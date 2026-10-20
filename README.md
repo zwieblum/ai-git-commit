@@ -294,3 +294,8 @@ This program is free software under the **GNU General Public License v3.0**
 full text.
 
 SPDX-License-Identifier: GPL-3.0-or-later
+
+
+### Branch base
+
+A new branch (derived from the archive name or `--branch`) is created from the **latest release branch** (highest leading number, e.g. `017-…`; otherwise the branch with the newest commit), not from the currently checked-out branch.
