@@ -45,6 +45,17 @@ import requests
 from tqdm import tqdm
 
 MAX_LINES_PER_COMMIT = 200
+# Never sync or commit Python bytecode caches.
+IGNORED_DIR_NAMES = ("__pycache__",)
+IGNORED_FILE_SUFFIXES = (".pyc", ".pyo")
+
+
+def is_ignored_path(path: str) -> bool:
+    """True for bytecode-cache paths that must never be added to the repo."""
+    parts = Path(path).parts
+    return any(d in parts for d in IGNORED_DIR_NAMES) or path.endswith(IGNORED_FILE_SUFFIXES)
+
+
 MIN_MESSAGE_WORDS = 10
 MAX_MESSAGE_WORDS = 100
 API_TIMEOUT = 120
@@ -368,6 +379,16 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
     if not src.is_dir():
         raise SystemExit(f"Source directory does not exist: {src}")
 
+    # Remove bytecode caches already present in the repo (tracked or not) so
+    # they show up as deletions and are never committed again.
+    for pc in list(repo.rglob("__pycache__")) + list(repo.rglob("*.py[co]")):
+        if ".git" in pc.relative_to(repo).parts:
+            continue
+        if pc.is_dir():
+            shutil.rmtree(pc, ignore_errors=True)
+        elif pc.exists():
+            pc.unlink()
+
     # Prefer rsync for efficient sync + delete
     if shutil.which("rsync"):
         cmd = [
@@ -376,6 +397,13 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             "--delete",
             "--exclude",
             ".git",
+            # never copy bytecode caches (tracked ones are removed below)
+            "--exclude",
+            "__pycache__/",
+            "--exclude",
+            "*.pyc",
+            "--exclude",
+            "*.pyo",
             "--info=progress2",
             f"{src}/",
             f"{repo}/",
@@ -388,7 +416,10 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
         for root, dirs, files in os.walk(src):
             rel = Path(root).relative_to(src)
             dest_dir = repo / rel
+            dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
             for f in files:
+                if f.endswith(IGNORED_FILE_SUFFIXES):
+                    continue
                 file_list.append((Path(root) / f, dest_dir / f))
 
         for src_file, dest_file in tqdm(
@@ -408,6 +439,7 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             for f in files:
                 if not (src_dir / f).exists():
                     to_remove.append(Path(root) / f)
+        # (bytecode caches are never in the file list, so they are removed above)
         for p in tqdm(to_remove, desc="Removing obsolete", unit="file", leave=False):
             p.unlink()
 
@@ -453,6 +485,9 @@ def collect_changes(repo: Path) -> list[FileChange]:
                 changes[path].status = "D"
             elif "A" in status or "?" in status:
                 changes[path].status = "A"
+            continue
+        if (status.strip() == "??" or status.startswith("A") or status.startswith("?")) \
+                and is_ignored_path(path):
             continue
         if status.strip() == "??" or status.startswith("A") or status.startswith("?"):
             # untracked / new: count lines
