@@ -1008,6 +1008,12 @@ def main() -> None:
         "When --src is an archive and --branch is omitted, the archive basename "
         "(without extension) is used automatically.",
     )
+    parser.add_argument(
+        "--mention-archive",
+        action="store_true",
+        help="When --src is an archive, include the archive filename in every "
+        "commit message (off by default).",
+    )
     args = parser.parse_args()
 
     author_name, author_email = parse_author(args.name)
@@ -1057,7 +1063,7 @@ def main() -> None:
         print("\nAsking model for commit plan …")
         archive_label = None
         src_path = args.src.expanduser().resolve()
-        if is_archive(src_path):
+        if args.mention_archive and is_archive(src_path):
             archive_label = src_path.name  # keep full name including extension
         plans = plan_commits(
             changes, args.git, args.url, args.model, args.api_key,
