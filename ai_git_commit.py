@@ -61,9 +61,21 @@ class FileChange:
 
 
 @dataclass
+class DiffHunk:
+    """One unified-diff hunk belonging to a single file."""
+    index: int
+    header: str          # the @@ -a,b +c,d @@ line
+    body: str            # lines following the header (including the header line)
+    change_lines: int    # approximate insertions + deletions in this hunk
+
+
+@dataclass
 class CommitPlan:
     message: str
     files: list[str] = field(default_factory=list)
+    # Optional partial-file application: path -> ordered list of hunk indices
+    # When set, only those hunks of the file are committed (for large-file splits).
+    hunks: dict[str, list[int]] = field(default_factory=dict)
 
 
 def run_git(repo: Path, *args: str, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
