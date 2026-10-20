@@ -512,12 +512,23 @@ def _parse_unified_hunks(diff_text: str) -> list[DiffHunk]:
 
 
 def _get_file_diff(repo: Path, path: str) -> str:
-    """Return the unified diff of *path* against HEAD (or the whole file if new)."""
-    if has_commits(repo):
-        r = run_git(repo, "diff", "HEAD", "--", path, check=False)
-        return r.stdout or ""
-    # Brand-new repo / untracked file: synthesise a "new file" diff
+    """Return the unified diff of *path* against HEAD (or the whole file if new).
+
+    Untracked files are not shown by ``git diff HEAD -- path``, so we detect
+    that case and synthesise a "new file" diff from the working-tree content.
+    """
     full = repo / path
+
+    if has_commits(repo):
+        in_head = run_git(
+            repo, "ls-tree", "HEAD", "--", path, check=False
+        ).stdout.strip()
+        if in_head:
+            r = run_git(repo, "diff", "HEAD", "--", path, check=False)
+            return r.stdout or ""
+        # File is not in HEAD → treat as new (fall through to synthesise)
+
+    # Brand-new repo or untracked file: synthesise a "new file" diff
     if not full.is_file():
         return ""
     try:
@@ -799,16 +810,33 @@ def apply_commits(
     #   path -> {"final": bytes, "hunks": list[DiffHunk], "applied": set[int], "is_new": bool}
     large_state: dict[str, dict] = {}
 
+    # Snapshot which paths are new relative to the *initial* HEAD (before we
+    # create any commits in this run).  Later commits must not flip is_new.
+    initially_new: set[str] = set()
+    for plan in plans:
+        for path in list(plan.files) + list(plan.hunks.keys()):
+            if path in initially_new:
+                continue
+            if not has_commits(repo):
+                initially_new.add(path)
+            else:
+                in_head = run_git(
+                    repo, "ls-tree", "HEAD", "--", path, check=False
+                ).stdout.strip()
+                if not in_head:
+                    initially_new.add(path)
+
     def _ensure_large_state(path: str) -> dict:
         if path in large_state:
             return large_state[path]
         full = repo / path
         final = full.read_bytes() if full.exists() else b""
+        # Prefer the already-saved final content for diff synthesis if the
+        # worktree file was altered; for planning-time consistency we re-read
+        # from worktree when present.
         diff_text = _get_file_diff(repo, path)
         hunks = _parse_unified_hunks(diff_text)
-        is_new = not has_commits(repo) or (
-            run_git(repo, "ls-tree", "HEAD", "--", path, check=False).stdout.strip() == ""
-        )
+        is_new = path in initially_new
         large_state[path] = {
             "final": final,
             "hunks": hunks,
@@ -833,22 +861,26 @@ def apply_commits(
                 st = _ensure_large_state(path)
                 st["applied"].update(idxs)
                 cumulative = sorted(st["applied"])
-                # Restore base version of the file
+                all_idx = set(range(len(st["hunks"])))
                 full = repo / path
-                if st["is_new"] and not cumulative:
-                    if full.exists():
-                        full.unlink()
-                elif st["is_new"]:
-                    # start from empty
-                    if full.exists():
-                        full.unlink()
-                else:
-                    run_git(repo, "checkout", "HEAD", "--", path, check=False)
 
-                # Build & apply cumulative patch against the base
+                # New files: always stage the full final content.  Splitting a
+                # brand-new file into intermediate patch steps is unreliable
+                # (no base in HEAD); the model still produces a useful message.
+                if st["is_new"]:
+                    full.parent.mkdir(parents=True, exist_ok=True)
+                    full.write_bytes(st["final"])
+                    run_git(repo, "add", "--", path, check=False)
+                    st["applied"] = set(all_idx)  # mark complete
+                    continue
+
+                # Existing file: restore base then apply cumulative hunks
+                run_git(repo, "checkout", "HEAD", "--", path, check=False)
+
                 patch = _build_partial_patch(
                     path, st["hunks"], cumulative, is_new=st["is_new"]
                 )
+                applied_ok = False
                 if patch:
                     with tempfile.NamedTemporaryFile(
                         mode="w", suffix=".patch", delete=False, encoding="utf-8"
@@ -856,7 +888,6 @@ def apply_commits(
                         tf.write(patch)
                         patch_path = tf.name
                     try:
-                        # Apply to worktree; --recount helps when context shifted
                         r = subprocess.run(
                             [
                                 "git",
@@ -870,26 +901,31 @@ def apply_commits(
                             capture_output=True,
                             text=True,
                         )
-                        if r.returncode != 0:
-                            # Fallback: if this is the last cumulative set, just write final
-                            all_idx = set(range(len(st["hunks"])))
-                            if st["applied"] >= all_idx:
-                                full.parent.mkdir(parents=True, exist_ok=True)
-                                full.write_bytes(st["final"])
-                                tqdm.write(
-                                    f"  (patch apply failed – wrote final content for {path})"
-                                )
-                            else:
-                                tqdm.write(
-                                    f"  warning: git apply failed for {path}:\n{r.stderr}"
-                                )
-                                # still try to continue with final if nothing else works
-                                full.parent.mkdir(parents=True, exist_ok=True)
-                                full.write_bytes(st["final"])
+                        applied_ok = r.returncode == 0
+                        if not applied_ok:
+                            tqdm.write(
+                                f"  warning: git apply failed for {path}:\n{r.stderr.strip()}"
+                            )
                     finally:
                         os.unlink(patch_path)
 
-                run_git(repo, "add", "--", path)
+                if not applied_ok:
+                    # Fallback: write final content when this is the complete set
+                    if st["applied"] >= all_idx or st["is_new"]:
+                        full.parent.mkdir(parents=True, exist_ok=True)
+                        full.write_bytes(st["final"])
+                        tqdm.write(f"  (wrote final content for {path})")
+                    else:
+                        tqdm.write(
+                            f"  warning: could not apply intermediate hunks for {path}; "
+                            "skipping stage for this commit"
+                        )
+                        continue
+
+                if full.exists() or full.is_symlink():
+                    run_git(repo, "add", "--", path, check=False)
+                else:
+                    tqdm.write(f"  warning: {path} missing after apply – not staged")
         else:
             # Full-file staging (small files / deletions)
             to_add = []
