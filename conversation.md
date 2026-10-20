@@ -2,16 +2,12 @@
 
 **User:**
 
-program crashes when URL is unreachable or model is unavailable
+add a function that recreates the last archive from the repository. optionally it should be ably to recreate any given archive.
 
 **Assistant:**
 
-Added error handling in call_llm (013).
-
-**User:**
-
-[still saw full traceback – was running old script; --src only updates the git repo, not the executable]
-
-**Assistant:**
-
-Error path now prints a short message to stderr and calls sys.exit(1) with no exception chain. Replace the script from this archive (do not only import the zip as --src).
+Added `--export [NAME]`:
+- `--export` alone → archive the branch with the newest commit (last import)
+- `--export NAME` → branch name or archive basename (with/without extension)
+- `--export-format zip|tar|tar.gz` and `--export-output PATH`
+Uses `git archive` with a top-level prefix matching the branch name.

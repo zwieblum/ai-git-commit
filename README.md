@@ -23,9 +23,25 @@ and chronologically ordered by the original file modification times.
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--src` / the archive). |
 | **Progress feedback** | Progress bars (via `tqdm`) for file copy (fallback path) and for the commit-creation loop; `rsync --info=progress2` when rsync is used. |
 | **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--src` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
+| **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: branch with the newest commit). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
 
 ---
+
+## Export / recreate archives
+
+```bash
+# Last imported archive (branch with newest commit)
+python ai_git_commit.py --git /path/to/repo --export
+
+# Specific branch or archive name
+python ai_git_commit.py --git /path/to/repo --export 013-llm-errors
+python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
+
+# Format and output path
+python ai_git_commit.py --git /path/to/repo --export --export-format tar.gz \
+  --export-output /tmp/out.tar.gz
+```
 
 ## Requirements
 
