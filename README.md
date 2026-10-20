@@ -6,6 +6,12 @@ commits whose messages are written by an LLM (OpenAI-compatible API).
 ## Features
 
 - Copies / syncs `--src` into the working tree of `--git` (rsync preferred, with `--delete`).
+- `--src` may be a directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, …).
+  Archives are extracted to a temporary directory; any single leading directory
+  layers are stripped automatically; the temp tree is removed afterwards.
+- If a plain source directory contains extra top-level directory layers relative
+  to the repository (e.g. repo has `program.py`, source has `somedir/program.py`),
+  the program **warns and stops** so you can fix the path.
 - Detects added, modified and deleted files together with insertion/deletion counts.
 - Asks the model to group changes into **functionally coherent** commits.
 - Tries to keep the total changed lines (insertions + deletions) of each commit
@@ -43,16 +49,17 @@ Optional:
 ## How it works
 
 1. Ensures `--git` is a Git working tree. If the path does not exist (or is not yet a repository), the directory is created and `git init` is run automatically. Also refuses to proceed when something is already staged.
-2. Syncs every file from `--src` into the repo root (`.git` is never touched).
-3. Collects a list of changed paths with `git diff --numstat` and `git status --porcelain`.
-4. Sends a compact summary to the model and asks for a JSON list of commits:
+2. Resolves `--src`: if it is an archive, extract to a temp dir and strip leading single-directory wrappers; if it is a plain directory that has extra nested layers matching the repo layout, abort with a clear warning.
+3. Syncs every file from the effective source into the repo root (`.git` is never touched).
+4. Collects a list of changed paths with `git diff --numstat` and `git status --porcelain`.
+5. Sends a compact summary to the model and asks for a JSON list of commits:
    ```json
    [
      {"message": "feat: add X", "files": ["src/a.py", "src/b.py"]},
      {"message": "fix: handle edge case", "files": ["src/c.py"]}
    ]
    ```
-5. For each planned commit, stages only the listed paths and commits with the
+6. For each planned commit, stages only the listed paths and commits with the
    supplied author/committer identity.
 
 ## Limitations
