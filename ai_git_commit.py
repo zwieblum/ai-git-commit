@@ -119,6 +119,47 @@ def ensure_git_repo(repo: Path) -> None:
         print(f"  initialized empty Git repository in {repo}")
 
 
+def ensure_branch(repo: Path, branch: str) -> None:
+    """Checkout *branch*, creating it if it does not exist.
+
+    - Existing branch → ``git checkout NAME``
+    - New branch with existing commits → ``git checkout -b NAME``
+    - New branch in an empty repo (no HEAD) → ``git checkout -b NAME``
+      (Git will create the branch on the first commit)
+    """
+    branch = branch.strip()
+    if not branch:
+        raise SystemExit("--branch must not be empty")
+    if re.search(r"[\s~^:?*\[\\]", branch) or branch.startswith("-"):
+        raise SystemExit(f"Invalid branch name: {branch!r}")
+
+    # Already on the requested branch?
+    cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+    if cur.returncode == 0 and cur.stdout.strip() == branch:
+        print(f"Already on branch '{branch}'")
+        return
+
+    # Does the branch already exist?
+    exists = run_git(
+        repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
+    )
+    if exists.returncode == 0:
+        print(f"Checking out existing branch '{branch}' …")
+        run_git(repo, "checkout", branch)
+        return
+
+    # Create and switch
+    if has_commits(repo):
+        print(f"Creating and checking out new branch '{branch}' …")
+        run_git(repo, "checkout", "-b", branch)
+    else:
+        # Empty repo: set the symbolic ref so the first commit lands on this branch
+        print(f"Empty repository – first commit will create branch '{branch}' …")
+        run_git(repo, "checkout", "-b", branch, check=False)
+        # Some Git versions need: git symbolic-ref HEAD refs/heads/NAME
+        run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}", check=False)
+
+
 ARCHIVE_SUFFIXES = (
     ".zip",
     ".tar",
@@ -920,6 +961,13 @@ def main() -> None:
         action="store_true",
         help="Show the planned commits without writing anything",
     )
+    parser.add_argument(
+        "--branch",
+        default=None,
+        metavar="NAME",
+        help="Checkout or create branch NAME before committing "
+        "(e.g. --branch import/2020-snapshot). Commits are made on that branch.",
+    )
     args = parser.parse_args()
 
     author_name, author_email = parse_author(args.name)
@@ -931,6 +979,9 @@ def main() -> None:
         raise SystemExit(
             "Repository has staged changes. Please commit or unstage them first."
         )
+
+    if args.branch:
+        ensure_branch(args.git, args.branch)
 
     with resolve_source(args.src) as effective_src:
         # Warn & abort if the (plain) source tree has extra directory layers
