@@ -6,7 +6,7 @@ i need a program that creates commits the differences from a new local directory
 
 **Assistant:**
 
-Created a Python program `ai_git_commit.py` with CLI flags, LLM-generated commit messages, file-level grouping ≤ 200 lines, rsync sync, etc.
+Created initial program with LLM commit messages, ≤200-line grouping, rsync sync, etc.
 
 **User:**
 
@@ -22,16 +22,16 @@ if the git repository does not exist, it should be created
 
 **Assistant:**
 
-Auto-create directory + `git init` when missing; handle brand-new repos without HEAD.
+Auto-create + `git init` when missing; handle repos without HEAD.
 
 **User:**
 
 if the new source moved the content down one directory … warn and stop.
-if --src points to an archive … unpack, strip preceding dirs, merge, remove temp.
+if --src points to an archive … unpack, strip, merge, remove temp.
 
 **Assistant:**
 
-Extra-directory-layer detection (warn + exit). Archive support with automatic strip and cleanup.
+Extra-directory-layer detection; archive support with strip and cleanup.
 
 **User:**
 
@@ -39,7 +39,7 @@ the git commits must represent the file date from the file in "--src" …
 
 **Assistant:**
 
-Commit author/committer dates taken from the newest source-file mtime in each commit.
+Commit dates taken from newest source-file mtime in each commit.
 
 **User:**
 
@@ -47,7 +47,7 @@ Add a progress bar to the script
 
 **Assistant:**
 
-Progress via `tqdm` for pure-Python file copy and for the commit loop; `rsync --info=progress2` when rsync is available.
+Progress via `tqdm` and `rsync --info=progress2`.
 
 **User:**
 
@@ -55,4 +55,13 @@ add a README.md to the archive. it should also contain an extensive functional d
 
 **Assistant:**
 
-Expanded README with features table, requirements, installation, usage, full functional description, architecture diagram, limitations. Progress bars included. Packaged as `005-progress-readme.zip`.
+Expanded README; packaged as `005-progress-readme.zip`.
+
+**User:**
+
+change the license to GPL3.
+add a copyright "© Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz"
+
+**Assistant:**
+
+License switched to GPL-3.0-or-later. Added copyright notice to the script header, README, and a full `LICENSE` file.
