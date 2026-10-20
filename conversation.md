@@ -2,7 +2,7 @@
 
 **User:**
 
-… (history of features) …
+… (feature history) …
 
 **User:**
 
@@ -10,4 +10,12 @@ Add the archive name to the commit message
 
 **Assistant:**
 
-When `--src` is an archive, every generated commit message includes the archive filename (e.g. `feat: add parser (from snapshot-2020.zip)`). The model is instructed to mention it; a fallback appends `(from <archive>)` if it did not.
+Archive name was always added to commit messages.
+
+**User:**
+
+make adding the archive name to the messages optional, off by default
+
+**Assistant:**
+
+Adding the archive name is now optional via `--mention-archive` (off by default).
