@@ -84,34 +84,175 @@ python ai_git_commit.py \
   --name "Botter <the-great-ai@localhost.at>"
 ```
 
-Optional:
+### Arguments
 
-- `--api-key …` or environment variable `OPENAI_API_KEY` (many local servers ignore it)
-- `--dry-run` – print the planned commits only
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--url` | yes | OpenAI-compatible base URL, e.g. `http://llamaserver:8080/v1` |
+| `--model` | yes | Model name, e.g. `qwen3.5-coder` |
+| `--git` | yes | Path to the local Git repository (created if missing) |
+| `--src` | yes | Newest source directory **or** archive (`.zip` / `.tar*` …) |
+| `--name` | yes | Committer identity: `"Name <email@domain>"` |
+| `--api-key` | no | API key (default: env `OPENAI_API_KEY`) |
+| `--dry-run` | no | Show the planned commits without writing |
 
-## How it works
+### Example – rebuild history from old archives
 
-1. Ensures `--git` is a Git working tree. If the path does not exist (or is not yet a repository), the directory is created and `git init` is run automatically. Also refuses to proceed when something is already staged.
-2. Resolves `--src`: if it is an archive, extract to a temp dir and strip leading single-directory wrappers; if it is a plain directory that has extra nested layers matching the repo layout, abort with a clear warning.
-3. Syncs every file from the effective source into the repo root (`.git` is never touched).
-4. Collects a list of changed paths with `git diff --numstat` and `git status --porcelain`.
-5. Sends a compact summary to the model and asks for a JSON list of commits:
-   ```json
-   [
-     {"message": "feat: add X", "files": ["src/a.py", "src/b.py"]},
-     {"message": "fix: handle edge case", "files": ["src/c.py"]}
-   ]
-   ```
-6. For each planned commit, stages only the listed paths and commits with the
-   supplied author/committer identity.
+```bash
+# oldest snapshot first
+python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2020.zip \
+  --name "Botter <bot@localhost>"
+python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2021.tar.gz \
+  --name "Botter <bot@localhost>"
+python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2022/ \
+  --name "Botter <bot@localhost>"
+```
+
+Because each commit inherits the file modification times from the source, the
+resulting Git history is chronologically ordered.
+
+---
+
+## Functional description
+
+### High-level flow
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  --src      │────▶│ resolve_source() │────▶│ effective_src   │
+│ (dir/arch)  │     │ extract + strip  │     │ (plain dir)     │
+└─────────────┘     └──────────────────┘     └────────┬────────┘
+                                                      │
+                                                      ▼
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  --git      │────▶│ ensure_git_repo  │────▶│ working tree    │
+│ (path)      │     │ (init if needed) │     │                 │
+└─────────────┘     └──────────────────┘     └────────┬────────┘
+                                                      │
+                      detect_extra_directory_layer()  │
+                      (abort if nested wrapper)       │
+                                                      ▼
+                                             sync_source_to_repo()
+                                             (rsync or copy+progress)
+                                                      │
+                                                      ▼
+                                             collect_changes()
+                                             (numstat + porcelain)
+                                                      │
+                                                      ▼
+                                             plan_commits() ──▶ LLM
+                                             (JSON list of commits)
+                                                      │
+                                                      ▼
+                                             apply_commits()
+                                             (stage, date from mtime,
+                                              commit with progress)
+```
+
+### 1. Source resolution (`resolve_source`)
+
+- **Directory** → used as-is.
+- **Archive** → extracted into a temporary directory; any chain of single
+  top-level directories is stripped (common for GitHub/GitLab zip downloads);
+  the content root is yielded; the temporary tree is deleted on exit.
+
+### 2. Repository preparation (`ensure_git_repo`)
+
+- Path missing → `mkdir -p` + `git init`.
+- Path exists but is not a Git work tree → `git init` in place.
+- Otherwise verified with `git rev-parse --is-inside-work-tree`.
+- Refuses to continue if anything is already staged.
+
+### 3. Extra-directory-layer guard
+
+Compares the top-level names of the repository with the content found after
+walking down single-directory wrappers in the source. If there is meaningful
+overlap, the program prints a diagnostic and exits with status 1. This
+prevents accidentally nesting the whole project under an extra folder.
+
+### 4. Sync
+
+- Prefer `rsync -a --delete --exclude .git --info=progress2`.
+- Fallback: pure-Python walk + `shutil.copy2` (preserves mtimes) with a
+  `tqdm` progress bar, then removal of obsolete files (also with progress).
+
+### 5. Change collection
+
+- `git diff --numstat HEAD` (skipped when the repo has no commits yet).
+- `git status --porcelain -uall` for untracked / deleted / renames.
+- Line counts for new files are obtained by counting lines in the file.
+
+### 6. Commit planning (LLM)
+
+A compact summary of every changed path (status + insertions/deletions) is
+sent to the model. The model must return a JSON array:
+
+```json
+[
+  {"message": "feat: add X", "files": ["src/a.py", "src/b.py"]},
+  {"message": "fix: handle edge case", "files": ["src/c.py"]}
+]
+```
+
+Rules enforced in the prompt (and cleaned up in code):
+
+- Prefer commits whose total changed lines ≤ 200.
+- Group by functional coherence.
+- Every changed path appears in exactly one commit.
+- Leftover paths (if the model omits any) are placed in a final catch-all commit.
+
+### 7. Applying commits
+
+For each planned commit:
+
+1. Stage only the listed paths (`git add` / `git rm`).
+2. Compute the newest `st_mtime` among the surviving files.
+3. Set `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` to that timestamp (UTC).
+4. Set author/committer name and email from `--name`.
+5. `git commit -m …`.
+
+A `tqdm` progress bar tracks overall commit creation.
+
+---
+
+## Architecture
+
+```
+ai_git_commit.py
+├── CLI (argparse)
+├── Identity parsing          parse_author()
+├── Repository bootstrap      ensure_git_repo()
+├── Source resolution         is_archive(), resolve_source(),
+│                             _strip_to_content_root()
+├── Layout safety             detect_extra_directory_layer()
+├── File sync                 sync_source_to_repo()
+├── Diff inspection           has_commits(), collect_changes()
+├── LLM client                call_llm()
+├── Planning                  plan_commits()
+├── Commit application        _max_mtime_for_paths(),
+│                             _format_git_date(), apply_commits()
+└── Orchestration             main()
+```
+
+All Git interaction goes through the `git` CLI (`subprocess`); no GitPython
+dependency. HTTP is handled solely by `requests`. Progress UI is provided by
+`tqdm` (and by rsync itself when available).
+
+---
 
 ## Limitations
 
-- Grouping is **file-level**. A single file whose diff exceeds 200 lines cannot be
-  split into smaller hunks automatically.
-- The model must return valid JSON; the script extracts the first JSON array it finds.
-- Deletions and renames are supported, but complex rename detection relies on Git’s
-  own status output.
+- Grouping is **file-level**. A single file whose diff exceeds 200 lines cannot
+  be split into smaller hunks automatically.
+- The model must return valid JSON; the script extracts the first JSON array it
+  finds (tolerates markdown fences).
+- Pure-deletion commits have no surviving files for mtime and therefore use the
+  current time.
+- Complex renames rely on Git’s own status/diff output.
+- The extra-layer detector only triggers when the repository already has
+  content to compare against.
+
+---
 
 ## License
 
