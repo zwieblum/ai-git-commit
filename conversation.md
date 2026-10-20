@@ -2,12 +2,16 @@
 
 **User:**
 
-… (feature history, bugfixes) …
-
-**User:**
-
-program crashes, when URL is unreachabe or model is unavailable
+program crashes when URL is unreachable or model is unavailable
 
 **Assistant:**
 
-`call_llm` now catches connection errors, timeouts, HTTP errors, non-JSON bodies, and API error payloads. The program exits with a clear message instead of an unhandled traceback.
+Added error handling in call_llm (013).
+
+**User:**
+
+[still saw full traceback – was running old script; --src only updates the git repo, not the executable]
+
+**Assistant:**
+
+Error path now prints a short message to stderr and calls sys.exit(1) with no exception chain. Replace the script from this archive (do not only import the zip as --src).
