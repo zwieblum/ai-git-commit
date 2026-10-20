@@ -463,71 +463,77 @@ def call_llm(
         "temperature": 0.3,
         "max_tokens": 4096,
     }
+    def _die(msg: str) -> None:
+        """Print a clear error and exit without a long exception chain."""
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=API_TIMEOUT)
     except requests.exceptions.ConnectionError as e:
-        raise SystemExit(
-            f"Cannot reach LLM server at {url}\n"
+        _die(
+            f"Error: cannot reach LLM server at {url}\n"
             f"  Check that the server is running and --url is correct.\n"
             f"  Detail: {e}"
-        ) from e
+        )
     except requests.exceptions.Timeout as e:
-        raise SystemExit(
-            f"LLM server at {url} did not respond within {API_TIMEOUT}s.\n"
+        _die(
+            f"Error: LLM server at {url} did not respond within {API_TIMEOUT}s.\n"
             f"  The model may be overloaded or the URL may be wrong.\n"
             f"  Detail: {e}"
-        ) from e
+        )
     except requests.exceptions.RequestException as e:
-        raise SystemExit(
-            f"Request to LLM server failed: {e}"
-        ) from e
+        _die(f"Error: request to LLM server failed: {e}")
 
     if resp.status_code != 200:
         body = (resp.text or "")[:500]
-        # Common model-unavailable patterns
         lower = body.lower()
-        if resp.status_code in (404, 503) or "model" in lower and (
-            "not found" in lower or "unavailable" in lower or "does not exist" in lower
+        if resp.status_code in (404, 503) or (
+            "model" in lower
+            and (
+                "not found" in lower
+                or "unavailable" in lower
+                or "does not exist" in lower
+            )
         ):
-            raise SystemExit(
-                f"LLM model '{model}' appears unavailable (HTTP {resp.status_code}).\n"
+            _die(
+                f"Error: LLM model '{model}' appears unavailable "
+                f"(HTTP {resp.status_code}).\n"
                 f"  URL: {url}\n"
                 f"  Response: {body}"
             )
-        raise SystemExit(
-            f"LLM server returned HTTP {resp.status_code}.\n"
+        _die(
+            f"Error: LLM server returned HTTP {resp.status_code}.\n"
             f"  URL: {url}\n"
             f"  Response: {body}"
         )
 
     try:
         data = resp.json()
-    except ValueError as e:
-        raise SystemExit(
-            f"LLM server returned non-JSON response.\n"
+    except ValueError:
+        _die(
+            f"Error: LLM server returned non-JSON response.\n"
             f"  URL: {url}\n"
             f"  Body (first 500 chars): {(resp.text or '')[:500]}"
-        ) from e
+        )
 
     # Some servers put errors in a 200 body
     if isinstance(data, dict) and data.get("error"):
         err = data["error"]
         msg = err.get("message", err) if isinstance(err, dict) else err
-        raise SystemExit(
-            f"LLM server error for model '{model}': {msg}"
-        )
+        _die(f"Error: LLM server error for model '{model}': {msg}")
 
     try:
         content = data["choices"][0]["message"]["content"]
         if content is None:
             raise KeyError("content is null")
         return content.strip()
-    except (KeyError, IndexError, TypeError) as e:
-        raise SystemExit(
-            f"Unexpected LLM response format (model '{model}' may be unavailable "
-            f"or returned an empty completion).\n"
+    except (KeyError, IndexError, TypeError):
+        _die(
+            f"Error: unexpected LLM response format "
+            f"(model '{model}' may be unavailable or returned an empty completion).\n"
             f"  Response: {data!r}"
-        ) from e
+        )
 
 
 def _parse_unified_hunks(diff_text: str) -> list[DiffHunk]:
