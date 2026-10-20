@@ -456,17 +456,42 @@ def plan_commits(changes: list[FileChange], base_url: str, model: str, api_key: 
     return plans
 
 
+def _max_mtime_for_paths(repo: Path, paths: list[str]) -> float | None:
+    """Return the newest modification time among the given paths that still exist."""
+    latest: float | None = None
+    for p in paths:
+        full = repo / p
+        if full.exists() or full.is_symlink():
+            try:
+                m = full.stat().st_mtime
+            except OSError:
+                continue
+            if latest is None or m > latest:
+                latest = m
+    return latest
+
+
+def _format_git_date(timestamp: float) -> str:
+    """Format a Unix timestamp for GIT_AUTHOR_DATE / GIT_COMMITTER_DATE."""
+    # Use ISO-8601 with explicit UTC offset so the chronological order is
+    # independent of the local timezone.
+    from datetime import datetime, timezone
+
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S +0000")
+
+
 def apply_commits(
     repo: Path,
     plans: list[CommitPlan],
     author_name: str,
     author_email: str,
 ) -> None:
-    env = os.environ.copy()
-    env["GIT_AUTHOR_NAME"] = author_name
-    env["GIT_AUTHOR_EMAIL"] = author_email
-    env["GIT_COMMITTER_NAME"] = author_name
-    env["GIT_COMMITTER_EMAIL"] = author_email
+    base_env = os.environ.copy()
+    base_env["GIT_AUTHOR_NAME"] = author_name
+    base_env["GIT_AUTHOR_EMAIL"] = author_email
+    base_env["GIT_COMMITTER_NAME"] = author_name
+    base_env["GIT_COMMITTER_EMAIL"] = author_email
 
     for i, plan in enumerate(plans, 1):
         print(f"\n=== Commit {i}/{len(plans)} ===")
@@ -474,7 +499,7 @@ def apply_commits(
         print(f"Files: {', '.join(plan.files)}")
 
         # Stage only the listed paths
-        # Use git add -- for both new and modified; for deletions use git add -u or explicit
+        # Use git add -- for both new and modified; for deletions use git rm
         to_add = []
         for p in plan.files:
             full = repo / p
@@ -492,6 +517,19 @@ def apply_commits(
         if not staged.stdout.strip():
             print("  (nothing staged – skipping)")
             continue
+
+        # Derive commit date from the source files' modification times so that
+        # a series of old archives produces a chronologically ordered history.
+        env = base_env.copy()
+        mtime = _max_mtime_for_paths(repo, plan.files)
+        if mtime is not None:
+            date_str = _format_git_date(mtime)
+            env["GIT_AUTHOR_DATE"] = date_str
+            env["GIT_COMMITTER_DATE"] = date_str
+            print(f"  date: {date_str} (from source file mtime)")
+        else:
+            # Pure deletion commit – fall back to current time
+            print("  date: (current time – no surviving files for mtime)")
 
         # Commit
         subprocess.run(
