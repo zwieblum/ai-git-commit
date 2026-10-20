@@ -256,4 +256,10 @@ dependency. HTTP is handled solely by `requests`. Progress UI is provided by
 
 ## License
 
-MIT
+Copyright © Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz
+
+This program is free software under the **GNU General Public License v3.0**
+(or, at your option, any later version).  See the file `LICENSE` for the
+full text.
+
+SPDX-License-Identifier: GPL-3.0-or-later
