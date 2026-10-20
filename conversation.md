@@ -38,3 +38,13 @@ Could not reproduce: `resolve_source()` in this code extracts the archive and yi
 **Assistant:**
 
 Cause: `ensure_branch()` ran `git checkout -b NEW` from whatever HEAD was checked out (here the first release), so the diff and history were relative to 001. New branches are now created from the latest release branch (`latest_release_branch()`: highest leading number such as 017-…, else newest commit date). Tested: starting on 001-a, new branch 003-c is created from 002-b. README updated.
+
+---
+
+**User:**
+
+* remove __pycache__ and never add it again
+
+**Assistant:**
+
+Removed `__pycache__` from the project and added a `.gitignore` (`__pycache__/`, `*.py[cod]`). In `ai_git_commit.py`, sync now excludes `__pycache__`/`*.pyc`/`*.pyo` (rsync and fallback copy), deletes any already present in the repo (tracked ones become a normal deletion commit), and `collect_changes()` ignores new bytecode files. Tested with the fallback copy path; rsync is not installed in the test environment, so the rsync flags were not run.
