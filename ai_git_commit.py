@@ -45,6 +45,8 @@ import requests
 from tqdm import tqdm
 
 MAX_LINES_PER_COMMIT = 200
+MIN_MESSAGE_WORDS = 10
+MAX_MESSAGE_WORDS = 100
 API_TIMEOUT = 120
 
 
@@ -743,6 +745,45 @@ def _extract_json_array(raw: str) -> list:
     return data
 
 
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def normalize_message(msg: str, files: list[str], reserve_words: int = 0) -> str:
+    """Force a commit message to MIN_MESSAGE_WORDS..MAX_MESSAGE_WORDS words.
+
+    ``reserve_words`` words are kept free for a suffix appended later (e.g. the
+    archive tag).  Too-long messages are cut (preferably at a sentence/line
+    end); too-short ones are extended with the affected file names.
+    """
+    msg = msg.strip()
+    limit = max(1, MAX_MESSAGE_WORDS - reserve_words)
+    if _word_count(msg) > limit:
+        # Keep original line structure while cutting at the word limit.
+        out: list[str] = []
+        used = 0
+        for line in msg.splitlines():
+            n = _word_count(line)
+            if used + n <= limit:
+                out.append(line)
+                used += n
+            else:
+                room = limit - used
+                if room > 0 and line.strip():
+                    out.append(" ".join(line.split()[:room]))
+                break
+        msg = "\n".join(out).strip()
+    minimum = max(0, MIN_MESSAGE_WORDS - reserve_words)
+    if _word_count(msg) < minimum:
+        shown = ", ".join(files[:3]) + (" and others" if len(files) > 3 else "")
+        msg = f"{msg.rstrip('. ')}: update {shown} to keep the codebase current and consistent"
+        if _word_count(msg) < minimum:
+            msg += " with the latest source changes"
+        if _word_count(msg) > limit:
+            msg = " ".join(msg.split()[:limit])
+    return msg
+
+
 def plan_commits(
     changes: list[FileChange],
     repo: Path,
@@ -784,7 +825,8 @@ def plan_commits(
             f"- Prefer commits whose total changed lines (insertions + deletions) stay <= {MAX_LINES_PER_COMMIT}.\n"
             "- Group files that belong to the same functional change (feature, fix, refactor, docs, etc.).\n"
             "- Order commits so that earlier commits do not depend on later ones when possible.\n"
-            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body.\n"
+            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
+            f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
             "- Every listed file must appear in exactly one commit.\n"
@@ -853,7 +895,8 @@ def plan_commits(
             "in a way that would break sequential application (each commit's hunk indices must be "
             "increasing, and commits themselves ordered by the smallest hunk index they contain).\n"
             "- Every hunk index from 0 to N-1 must appear in exactly one commit.\n"
-            "- Commit messages: imperative mood, concise subject (<=72 chars).\n"
+            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
+            f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects with keys:\n"
             '  "message" (string), "hunks" (list of integer hunk indices).\n'
@@ -912,12 +955,16 @@ def plan_commits(
         file_plans.sort(key=lambda p: min(p.hunks.get(c.path, [0])))
         plans.extend(file_plans)
 
-    # Ensure the archive name appears in every commit message when applicable
-    if archive_name:
-        tag = f"(from {archive_name})"
-        for p in plans:
-            if tag not in p.message and archive_name not in p.message:
-                p.message = f"{p.message.rstrip()} {tag}"
+    # Ensure the archive name appears in every commit message when applicable,
+    # then enforce the word-count limits on every message.
+    tag = f"(from {archive_name})" if archive_name else ""
+    for p in plans:
+        needs_tag = bool(tag) and tag not in p.message and archive_name not in p.message
+        p.message = normalize_message(
+            p.message, p.files, reserve_words=_word_count(tag) if needs_tag else 0
+        )
+        if needs_tag:
+            p.message = f"{p.message.rstrip()} {tag}"
 
     return plans
 
