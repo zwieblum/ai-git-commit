@@ -585,12 +585,21 @@ def plan_commits(
     base_url: str,
     model: str,
     api_key: str | None,
+    archive_name: str | None = None,
 ) -> list[CommitPlan]:
     if not changes:
         return []
 
     large = [c for c in changes if c.total_lines > MAX_LINES_PER_COMMIT and c.status != "D"]
     small = [c for c in changes if c not in large]
+
+    archive_note = ""
+    if archive_name:
+        archive_note = (
+            f"\n- These changes come from the archive '{archive_name}'. "
+            f"Mention the archive name in each commit message "
+            f"(e.g. append \" (from {archive_name})\" or weave it into the subject).\n"
+        )
 
     # ---- 1) Plan for small files / deletions (file-level) ----
     plans: list[CommitPlan] = []
@@ -612,13 +621,15 @@ def plan_commits(
             "- Group files that belong to the same functional change (feature, fix, refactor, docs, etc.).\n"
             "- Order commits so that earlier commits do not depend on later ones when possible.\n"
             "- Commit messages: imperative mood, concise subject (<=72 chars), optional body.\n"
+            f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
             "- Every listed file must appear in exactly one commit.\n"
             "- Do not invent file paths."
         )
         user = (
-            f"The following files have changed (total ~{total} lines):\n\n"
-            f"{summary}\n\n"
+            f"The following files have changed (total ~{total} lines)"
+            + (f" from archive '{archive_name}'" if archive_name else "")
+            + f":\n\n{summary}\n\n"
             "Produce a list of commits that apply these changes in a sensible order."
         )
         raw = call_llm(base_url, model, system, user, api_key)
@@ -679,13 +690,15 @@ def plan_commits(
             "increasing, and commits themselves ordered by the smallest hunk index they contain).\n"
             "- Every hunk index from 0 to N-1 must appear in exactly one commit.\n"
             "- Commit messages: imperative mood, concise subject (<=72 chars).\n"
+            f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects with keys:\n"
             '  "message" (string), "hunks" (list of integer hunk indices).\n'
             "- Do not invent hunk indices."
         )
         user = (
-            f"File: {c.path}  (status={c.status}, +{c.insertions}/-{c.deletions})\n"
-            f"Total hunks: {len(hunks)}\n\n"
+            f"File: {c.path}  (status={c.status}, +{c.insertions}/-{c.deletions})"
+            + (f" from archive '{archive_name}'" if archive_name else "")
+            + f"\nTotal hunks: {len(hunks)}\n\n"
             f"{hunk_block}\n\n"
             "Produce the list of commits that split this file into functional hunks."
         )
@@ -734,6 +747,13 @@ def plan_commits(
         # keep sequential order by first hunk index
         file_plans.sort(key=lambda p: min(p.hunks.get(c.path, [0])))
         plans.extend(file_plans)
+
+    # Ensure the archive name appears in every commit message when applicable
+    if archive_name:
+        tag = f"(from {archive_name})"
+        for p in plans:
+            if tag not in p.message and archive_name not in p.message:
+                p.message = f"{p.message.rstrip()} {tag}"
 
     return plans
 
@@ -1035,7 +1055,14 @@ def main() -> None:
             print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
 
         print("\nAsking model for commit plan …")
-        plans = plan_commits(changes, args.git, args.url, args.model, args.api_key)
+        archive_label = None
+        src_path = args.src.expanduser().resolve()
+        if is_archive(src_path):
+            archive_label = src_path.name  # keep full name including extension
+        plans = plan_commits(
+            changes, args.git, args.url, args.model, args.api_key,
+            archive_name=archive_label,
+        )
 
         if not plans:
             print("Model returned empty plan.")
