@@ -242,8 +242,9 @@ dependency. HTTP is handled solely by `requests`. Progress UI is provided by
 
 ## Limitations
 
-- Grouping is **file-level**. A single file whose diff exceeds 200 lines cannot
-  be split into smaller hunks automatically.
+- Small files are grouped at **file level**. A single file whose diff exceeds
+  200 lines is split into **functional hunks** by the model; those hunks are
+  applied sequentially as separate commits.
 - The model must return valid JSON; the script extracts the first JSON array it
   finds (tolerates markdown fences).
 - Pure-deletion commits have no surviving files for mtime and therefore use the
