@@ -90,6 +90,154 @@ def ensure_git_repo(repo: Path) -> None:
         print(f"  initialized empty Git repository in {repo}")
 
 
+ARCHIVE_SUFFIXES = (
+    ".zip",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".tar.bz2",
+    ".tbz2",
+    ".tar.xz",
+    ".txz",
+)
+
+
+def is_archive(path: Path) -> bool:
+    name = path.name.lower()
+    return path.is_file() and any(name.endswith(s) for s in ARCHIVE_SUFFIXES)
+
+
+def _strip_to_content_root(extracted: Path) -> Path:
+    """
+    If the extracted tree contains exactly one top-level directory (and no
+    loose files), treat that directory as the real content root.  Repeat
+    while the pattern holds so nested single-dir wrappers are also removed.
+    """
+    current = extracted
+    while True:
+        items = [p for p in current.iterdir() if not p.name.startswith(".")]
+        if len(items) == 1 and items[0].is_dir():
+            current = items[0]
+            continue
+        break
+    return current
+
+
+@contextmanager
+def resolve_source(src: Path) -> Iterator[Path]:
+    """
+    Yield a directory that contains the source content.
+
+    * Plain directory → yield as-is.
+    * Archive (zip/tar/…) → extract to a temporary directory, strip any
+      single leading directory layers, yield the content root, then delete
+      the temporary tree on exit.
+    """
+    src = src.expanduser().resolve()
+    if not src.exists():
+        raise SystemExit(f"Source path does not exist: {src}")
+
+    if src.is_dir():
+        yield src
+        return
+
+    if not is_archive(src):
+        raise SystemExit(
+            f"Source must be a directory or a supported archive "
+            f"({', '.join(ARCHIVE_SUFFIXES)}), got: {src}"
+        )
+
+    tmp = tempfile.mkdtemp(prefix="ai_git_commit_")
+    tmp_path = Path(tmp)
+    print(f"Extracting archive {src.name} → temporary directory …")
+    try:
+        name = src.name.lower()
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(src, "r") as zf:
+                zf.extractall(tmp_path)
+        elif name.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
+            with tarfile.open(src, "r:*") as tf:
+                tf.extractall(tmp_path)
+        else:
+            raise SystemExit(f"Unsupported archive format: {src}")
+
+        content = _strip_to_content_root(tmp_path)
+        if content != tmp_path:
+            print(f"  stripped leading directory layer(s) → using {content.relative_to(tmp_path)}")
+        yield content
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        print("  temporary extraction directory removed.")
+
+
+def detect_extra_directory_layer(src: Path, repo: Path) -> str | None:
+    """
+    Detect the common case where the source tree has been wrapped in one (or
+    more) extra top-level directories compared to the repository root.
+
+    Example:
+        repo:   program.py, lib/, …
+        src:    somedir/program.py, somedir/lib/, …
+
+    Returns a human-readable warning message, or None if the layouts look
+    compatible.
+    """
+    # Only meaningful when the repository already has content
+    repo_top = {
+        p.name
+        for p in repo.iterdir()
+        if p.name != ".git" and not p.name.startswith(".")
+    }
+    if not repo_top:
+        return None  # empty / new repo – nothing to compare against
+
+    src_items = [p for p in src.iterdir() if not p.name.startswith(".")]
+    if not src_items:
+        return None
+
+    # Walk down while there is exactly one directory and no files
+    depth = 0
+    current = src
+    while True:
+        items = [p for p in current.iterdir() if not p.name.startswith(".")]
+        files = [p for p in items if p.is_file()]
+        dirs = [p for p in items if p.is_dir()]
+        if files:
+            break
+        if len(dirs) != 1:
+            break
+        current = dirs[0]
+        depth += 1
+
+    if depth == 0:
+        return None
+
+    # Check whether the inner content overlaps with the repo root
+    inner_top = {
+        p.name
+        for p in current.iterdir()
+        if not p.name.startswith(".")
+    }
+    overlap = repo_top & inner_top
+    if not overlap:
+        return None
+
+    # Build a short relative path of the extra layers
+    rel_layers = current.relative_to(src)
+    return (
+        f"Source directory appears to contain {depth} extra top-level "
+        f"directory layer(s): '{rel_layers}'.\n"
+        f"  Repository root contains e.g.: {', '.join(sorted(repo_top)[:5])}"
+        f"{'…' if len(repo_top) > 5 else ''}\n"
+        f"  Inside the extra layer(s) we find overlapping names: "
+        f"{', '.join(sorted(overlap)[:5])}{'…' if len(overlap) > 5 else ''}\n"
+        f"\n"
+        f"This usually means the content was nested one directory deeper than "
+        f"expected.  Please point --src at the correct directory (or unpack "
+        f"an archive, which is automatically stripped) and try again."
+    )
+
+
 def sync_source_to_repo(src: Path, repo: Path) -> None:
     """
     Copy all content from src into repo, deleting files that no longer exist
@@ -386,7 +534,8 @@ def main() -> None:
         "--src",
         required=True,
         type=Path,
-        help="Path to the newest (non-git) source directory",
+        help="Path to the newest source directory, or an archive "
+        "(.zip / .tar / .tar.gz / …) that will be unpacked automatically",
     )
     parser.add_argument(
         "--name",
@@ -415,46 +564,54 @@ def main() -> None:
             "Repository has staged changes. Please commit or unstage them first."
         )
 
-    print(f"Syncing {args.src} → {args.git} …")
-    if not args.dry_run:
-        sync_source_to_repo(args.src, args.git)
-    else:
-        print("  (dry-run: skip actual file sync)")
+    with resolve_source(args.src) as effective_src:
+        # Warn & abort if the (plain) source tree has extra directory layers
+        # relative to the repository.  Archives are already stripped by
+        # resolve_source, so this mainly protects directory inputs.
+        warning = detect_extra_directory_layer(effective_src, args.git)
+        if warning:
+            print("\n*** Extra directory layer detected ***\n")
+            print(warning)
+            raise SystemExit(1)
 
-    print("Collecting changes …")
-    # In dry-run we still need the would-be changes; for simplicity re-sync is required
-    # so dry-run after a real sync or assume user already synced.
-    changes = collect_changes(args.git)
-    if not changes:
-        print("No changes detected. Nothing to commit.")
-        return
+        print(f"Syncing {effective_src} → {args.git} …")
+        if not args.dry_run:
+            sync_source_to_repo(effective_src, args.git)
+        else:
+            print("  (dry-run: skip actual file sync)")
 
-    print(f"Found {len(changes)} changed path(s):")
-    for c in changes:
-        print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
+        print("Collecting changes …")
+        changes = collect_changes(args.git)
+        if not changes:
+            print("No changes detected. Nothing to commit.")
+            return
 
-    print("\nAsking model for commit plan …")
-    plans = plan_commits(changes, args.url, args.model, args.api_key)
+        print(f"Found {len(changes)} changed path(s):")
+        for c in changes:
+            print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
 
-    if not plans:
-        print("Model returned empty plan.")
-        return
+        print("\nAsking model for commit plan …")
+        plans = plan_commits(changes, args.url, args.model, args.api_key)
 
-    print(f"\nPlanned {len(plans)} commit(s):")
-    for i, p in enumerate(plans, 1):
-        line_sum = sum(
-            next((c.total_lines for c in changes if c.path == f), 0) for f in p.files
-        )
-        print(f"  {i}. [{line_sum} lines] {p.message}")
-        for f in p.files:
-            print(f"       - {f}")
+        if not plans:
+            print("Model returned empty plan.")
+            return
 
-    if args.dry_run:
-        print("\nDry-run finished. No commits were created.")
-        return
+        print(f"\nPlanned {len(plans)} commit(s):")
+        for i, p in enumerate(plans, 1):
+            line_sum = sum(
+                next((c.total_lines for c in changes if c.path == f), 0) for f in p.files
+            )
+            print(f"  {i}. [{line_sum} lines] {p.message}")
+            for f in p.files:
+                print(f"       - {f}")
 
-    apply_commits(args.git, plans, author_name, author_email)
-    print("\nDone.")
+        if args.dry_run:
+            print("\nDry-run finished. No commits were created.")
+            return
+
+        apply_commits(args.git, plans, author_name, author_email)
+        print("\nDone.")
 
 
 if __name__ == "__main__":
