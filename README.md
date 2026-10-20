@@ -15,7 +15,7 @@ and chronologically ordered by the original file modification times.
 | Feature | Description |
 |--------|-------------|
 | **Source flexibility** | `--src` can be a plain directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, …). |
-| **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. The archive filename is included in every commit message. |
+| **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. Optionally (`--mention-archive`) the archive filename can be included in every commit message (off by default). |
 | **Extra-layer guard** | If a plain directory nests content one or more levels deeper than the repository root (and names overlap), the program **warns and stops**. |
 | **Auto-init** | If `--git` does not exist or is not yet a repository, the directory is created and `git init` is run. |
 | **LLM commit messages** | An OpenAI-compatible `/v1/chat/completions` endpoint produces a JSON plan of functionally coherent commits. |
@@ -96,6 +96,7 @@ python ai_git_commit.py \
 | `--name` | yes | Committer identity: `"Name <email@domain>"` |
 | `--api-key` | no | API key (default: env `OPENAI_API_KEY`) |
 | `--branch` | no | Checkout or create branch NAME before committing. If omitted and `--src` is an archive, the archive name without extension is used. |
+| `--mention-archive` | no | Include archive filename in commit messages (off by default) |
 | `--dry-run` | no | Show the planned commits without writing |
 
 ### Example – rebuild history from old archives
