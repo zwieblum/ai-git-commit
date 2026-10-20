@@ -409,44 +409,101 @@ def call_llm(
         raise RuntimeError(f"Unexpected LLM response format: {data}") from e
 
 
-def plan_commits(changes: list[FileChange], base_url: str, model: str, api_key: str | None) -> list[CommitPlan]:
-    if not changes:
-        return []
+def _parse_unified_hunks(diff_text: str) -> list[DiffHunk]:
+    """Parse a unified diff (possibly multi-file) into per-hunk objects.
 
-    # Build summary for the model
-    lines = []
-    total = 0
-    for c in changes:
-        lines.append(
-            f"- {c.path}  [{c.status}]  +{c.insertions}/-{c.deletions}  (total {c.total_lines} lines)"
-        )
-        total += c.total_lines
+    Only the hunk bodies are kept; file headers are ignored here (caller
+    already knows the path).
+    """
+    hunks: list[DiffHunk] = []
+    lines = diff_text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("@@"):
+            header = line.rstrip("\n")
+            body_lines = [line]
+            i += 1
+            while i < len(lines) and not lines[i].startswith("@@") and not lines[i].startswith("diff --git"):
+                body_lines.append(lines[i])
+                i += 1
+            body = "".join(body_lines)
+            # count +/- lines (ignore @@ and context ' ')
+            change = sum(
+                1
+                for bl in body_lines
+                if bl.startswith("+") or bl.startswith("-")
+            ) - sum(1 for bl in body_lines if bl.startswith("+++") or bl.startswith("---"))
+            # simpler approximate: every + or - that is not a file header
+            change = 0
+            for bl in body_lines[1:]:
+                if bl.startswith("+") or bl.startswith("-"):
+                    change += 1
+            hunks.append(
+                DiffHunk(
+                    index=len(hunks),
+                    header=header,
+                    body=body,
+                    change_lines=change,
+                )
+            )
+            continue
+        i += 1
+    return hunks
 
-    summary = "\n".join(lines)
 
-    system = (
-        "You are an expert software engineer who writes clear, conventional Git commit messages "
-        "and groups related changes into logically coherent commits.\n"
-        "Rules:\n"
-        f"- Prefer commits whose total changed lines (insertions + deletions) stay <= {MAX_LINES_PER_COMMIT}.\n"
-        "- If a single file exceeds that limit, it may form its own commit.\n"
-        "- Group files that belong to the same functional change (feature, fix, refactor, docs, etc.).\n"
-        "- Order commits so that earlier commits do not depend on later ones when possible.\n"
-        "- Commit messages: imperative mood, concise subject (<=72 chars), optional body.\n"
-        "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
-        "- Every changed file must appear in exactly one commit.\n"
-        "- Do not invent file paths."
+def _get_file_diff(repo: Path, path: str) -> str:
+    """Return the unified diff of *path* against HEAD (or the whole file if new)."""
+    if has_commits(repo):
+        r = run_git(repo, "diff", "HEAD", "--", path, check=False)
+        return r.stdout or ""
+    # Brand-new repo / untracked file: synthesise a "new file" diff
+    full = repo / path
+    if not full.is_file():
+        return ""
+    try:
+        content = full.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    lines = content.splitlines(keepends=True)
+    if not lines:
+        return ""
+    header = (
+        f"diff --git a/{path} b/{path}\n"
+        f"new file mode 100644\n"
+        f"--- /dev/null\n"
+        f"+++ b/{path}\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n"
     )
+    body = "".join("+" + (ln if ln.endswith("\n") else ln + "\n") for ln in lines)
+    return header + body
 
-    user = (
-        f"The following files have changed (total ~{total} lines):\n\n"
-        f"{summary}\n\n"
-        "Produce a list of commits that apply these changes in a sensible order."
-    )
 
-    raw = call_llm(base_url, model, system, user, api_key)
+def _build_partial_patch(path: str, all_hunks: list[DiffHunk], indices: list[int], is_new: bool) -> str:
+    """Build a valid unified diff that contains only the selected hunks."""
+    selected = [all_hunks[i] for i in indices if 0 <= i < len(all_hunks)]
+    if not selected:
+        return ""
+    if is_new and indices == list(range(len(all_hunks))):
+        # full new file – return complete synthetic diff is handled by caller
+        pass
+    parts = [
+        f"diff --git a/{path} b/{path}\n",
+    ]
+    if is_new and indices[0] == 0:
+        parts.append(f"new file mode 100644\n")
+        parts.append(f"--- /dev/null\n")
+        parts.append(f"+++ b/{path}\n")
+    else:
+        parts.append(f"--- a/{path}\n")
+        parts.append(f"+++ b/{path}\n")
+    for h in selected:
+        parts.append(h.body if h.body.endswith("\n") else h.body + "\n")
+    return "".join(parts)
 
-    # Extract JSON (tolerate markdown fences)
+
+def _extract_json_array(raw: str) -> list:
+    """Extract a JSON array from an LLM response (tolerates markdown fences)."""
     text = raw
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if fence:
@@ -454,44 +511,170 @@ def plan_commits(changes: list[FileChange], base_url: str, model: str, api_key: 
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        # try to find first [ ... ]
         m = re.search(r"\[[\s\S]*\]", text)
         if not m:
             raise RuntimeError(f"LLM did not return valid JSON:\n{raw}")
         data = json.loads(m.group(0))
-
     if not isinstance(data, list):
-        raise RuntimeError(f"Expected JSON list of commits, got: {type(data)}")
+        raise RuntimeError(f"Expected JSON list, got: {type(data)}")
+    return data
 
+
+def plan_commits(
+    changes: list[FileChange],
+    repo: Path,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+) -> list[CommitPlan]:
+    if not changes:
+        return []
+
+    large = [c for c in changes if c.total_lines > MAX_LINES_PER_COMMIT and c.status != "D"]
+    small = [c for c in changes if c not in large]
+
+    # ---- 1) Plan for small files / deletions (file-level) ----
     plans: list[CommitPlan] = []
-    seen: set[str] = set()
-    all_paths = {c.path for c in changes}
-
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        msg = str(item.get("message", "")).strip()
-        files = item.get("files") or []
-        if not msg or not isinstance(files, list):
-            continue
-        clean_files = []
-        for f in files:
-            f = str(f).strip()
-            if f in all_paths and f not in seen:
-                clean_files.append(f)
-                seen.add(f)
-        if clean_files:
-            plans.append(CommitPlan(message=msg, files=clean_files))
-
-    # Any leftover files go into a final catch-all commit
-    leftover = [c.path for c in changes if c.path not in seen]
-    if leftover:
-        plans.append(
-            CommitPlan(
-                message="chore: remaining changes",
-                files=leftover,
+    if small:
+        lines = []
+        total = 0
+        for c in small:
+            lines.append(
+                f"- {c.path}  [{c.status}]  +{c.insertions}/-{c.deletions}  (total {c.total_lines} lines)"
             )
+            total += c.total_lines
+        summary = "\n".join(lines)
+
+        system = (
+            "You are an expert software engineer who writes clear, conventional Git commit messages "
+            "and groups related changes into logically coherent commits.\n"
+            "Rules:\n"
+            f"- Prefer commits whose total changed lines (insertions + deletions) stay <= {MAX_LINES_PER_COMMIT}.\n"
+            "- Group files that belong to the same functional change (feature, fix, refactor, docs, etc.).\n"
+            "- Order commits so that earlier commits do not depend on later ones when possible.\n"
+            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body.\n"
+            "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
+            "- Every listed file must appear in exactly one commit.\n"
+            "- Do not invent file paths."
         )
+        user = (
+            f"The following files have changed (total ~{total} lines):\n\n"
+            f"{summary}\n\n"
+            "Produce a list of commits that apply these changes in a sensible order."
+        )
+        raw = call_llm(base_url, model, system, user, api_key)
+        data = _extract_json_array(raw)
+        seen: set[str] = set()
+        all_small = {c.path for c in small}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            msg = str(item.get("message", "")).strip()
+            files = item.get("files") or []
+            if not msg or not isinstance(files, list):
+                continue
+            clean = []
+            for f in files:
+                f = str(f).strip()
+                if f in all_small and f not in seen:
+                    clean.append(f)
+                    seen.add(f)
+            if clean:
+                plans.append(CommitPlan(message=msg, files=clean))
+        leftover = [c.path for c in small if c.path not in seen]
+        if leftover:
+            plans.append(CommitPlan(message="chore: remaining small changes", files=leftover))
+
+    # ---- 2) Large files: ask the model to split into functional hunks ----
+    for c in large:
+        print(f"  Large file {c.path} ({c.total_lines} lines) – asking model to plan functional hunks …")
+        diff_text = _get_file_diff(repo, c.path)
+        hunks = _parse_unified_hunks(diff_text)
+        if not hunks:
+            # fallback: treat whole file as one commit
+            plans.append(CommitPlan(message=f"update {c.path}", files=[c.path]))
+            continue
+
+        # Build a readable hunk summary for the model (truncate very long bodies)
+        hunk_summaries = []
+        for h in hunks:
+            preview = h.body.strip().splitlines()
+            preview = preview[:8]  # first few lines
+            preview_txt = "\n".join(preview)
+            if len(h.body.splitlines()) > 8:
+                preview_txt += "\n…"
+            hunk_summaries.append(
+                f"HUNK {h.index}  ({h.change_lines} changed lines)\n{h.header}\n{preview_txt}"
+            )
+        hunk_block = "\n\n".join(hunk_summaries)
+
+        system = (
+            "You are an expert software engineer. A single large file has many changes. "
+            "Split them into functionally coherent commits.\n"
+            "Rules:\n"
+            f"- Each commit should preferably contain at most {MAX_LINES_PER_COMMIT} changed lines "
+            "(sum of the hunk change_lines you assign to it).\n"
+            "- Group consecutive or related hunks that implement the same logical change.\n"
+            "- Hunks must be applied in ascending index order; do not reorder them across commits "
+            "in a way that would break sequential application (each commit's hunk indices must be "
+            "increasing, and commits themselves ordered by the smallest hunk index they contain).\n"
+            "- Every hunk index from 0 to N-1 must appear in exactly one commit.\n"
+            "- Commit messages: imperative mood, concise subject (<=72 chars).\n"
+            "- Output ONLY valid JSON: a list of objects with keys:\n"
+            '  "message" (string), "hunks" (list of integer hunk indices).\n'
+            "- Do not invent hunk indices."
+        )
+        user = (
+            f"File: {c.path}  (status={c.status}, +{c.insertions}/-{c.deletions})\n"
+            f"Total hunks: {len(hunks)}\n\n"
+            f"{hunk_block}\n\n"
+            "Produce the list of commits that split this file into functional hunks."
+        )
+        raw = call_llm(base_url, model, system, user, api_key)
+        data = _extract_json_array(raw)
+
+        assigned: set[int] = set()
+        file_plans: list[CommitPlan] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            msg = str(item.get("message", "")).strip()
+            idxs = item.get("hunks") or item.get("files") or []
+            if not msg or not isinstance(idxs, list):
+                continue
+            clean_idx = []
+            for x in idxs:
+                try:
+                    xi = int(x)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= xi < len(hunks) and xi not in assigned:
+                    clean_idx.append(xi)
+                    assigned.add(xi)
+            clean_idx.sort()
+            if clean_idx:
+                file_plans.append(
+                    CommitPlan(
+                        message=msg,
+                        files=[c.path],
+                        hunks={c.path: clean_idx},
+                    )
+                )
+
+        # any leftover hunks → final catch-all for this file
+        missing = sorted(set(range(len(hunks))) - assigned)
+        if missing:
+            file_plans.append(
+                CommitPlan(
+                    message=f"chore: remaining changes in {c.path}",
+                    files=[c.path],
+                    hunks={c.path: missing},
+                )
+            )
+
+        # keep sequential order by first hunk index
+        file_plans.sort(key=lambda p: min(p.hunks.get(c.path, [0])))
+        plans.extend(file_plans)
 
     return plans
 
@@ -533,26 +716,112 @@ def apply_commits(
     base_env["GIT_COMMITTER_NAME"] = author_name
     base_env["GIT_COMMITTER_EMAIL"] = author_email
 
+    # Per-file state for sequential hunk application:
+    #   path -> {"final": bytes, "hunks": list[DiffHunk], "applied": set[int], "is_new": bool}
+    large_state: dict[str, dict] = {}
+
+    def _ensure_large_state(path: str) -> dict:
+        if path in large_state:
+            return large_state[path]
+        full = repo / path
+        final = full.read_bytes() if full.exists() else b""
+        diff_text = _get_file_diff(repo, path)
+        hunks = _parse_unified_hunks(diff_text)
+        is_new = not has_commits(repo) or (
+            run_git(repo, "ls-tree", "HEAD", "--", path, check=False).stdout.strip() == ""
+        )
+        large_state[path] = {
+            "final": final,
+            "hunks": hunks,
+            "applied": set(),
+            "is_new": is_new,
+        }
+        return large_state[path]
+
     for i, plan in enumerate(
         tqdm(plans, desc="Creating commits", unit="commit", leave=True), start=1
     ):
         tqdm.write(f"\n=== Commit {i}/{len(plans)} ===")
         tqdm.write(f"Message: {plan.message}")
         tqdm.write(f"Files: {', '.join(plan.files)}")
+        if plan.hunks:
+            for p, idxs in plan.hunks.items():
+                tqdm.write(f"  hunks[{p}]: {idxs}")
 
-        # Stage only the listed paths
-        # Use git add -- for both new and modified; for deletions use git rm
-        to_add = []
-        for p in plan.files:
-            full = repo / p
-            if full.exists() or full.is_symlink():
-                to_add.append(p)
-            else:
-                # deleted
-                run_git(repo, "rm", "--ignore-unmatch", "-f", "--", p, check=False)
+        if plan.hunks:
+            # Partial / sequential hunk application for large files
+            for path, idxs in plan.hunks.items():
+                st = _ensure_large_state(path)
+                st["applied"].update(idxs)
+                cumulative = sorted(st["applied"])
+                # Restore base version of the file
+                full = repo / path
+                if st["is_new"] and not cumulative:
+                    if full.exists():
+                        full.unlink()
+                elif st["is_new"]:
+                    # start from empty
+                    if full.exists():
+                        full.unlink()
+                else:
+                    run_git(repo, "checkout", "HEAD", "--", path, check=False)
 
-        if to_add:
-            run_git(repo, "add", "--", *to_add)
+                # Build & apply cumulative patch against the base
+                patch = _build_partial_patch(
+                    path, st["hunks"], cumulative, is_new=st["is_new"]
+                )
+                if patch:
+                    with tempfile.NamedTemporaryFile(
+                        mode="w", suffix=".patch", delete=False, encoding="utf-8"
+                    ) as tf:
+                        tf.write(patch)
+                        patch_path = tf.name
+                    try:
+                        # Apply to worktree; --recount helps when context shifted
+                        r = subprocess.run(
+                            [
+                                "git",
+                                "-C",
+                                str(repo),
+                                "apply",
+                                "--recount",
+                                "--whitespace=nowarn",
+                                patch_path,
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if r.returncode != 0:
+                            # Fallback: if this is the last cumulative set, just write final
+                            all_idx = set(range(len(st["hunks"])))
+                            if st["applied"] >= all_idx:
+                                full.parent.mkdir(parents=True, exist_ok=True)
+                                full.write_bytes(st["final"])
+                                tqdm.write(
+                                    f"  (patch apply failed – wrote final content for {path})"
+                                )
+                            else:
+                                tqdm.write(
+                                    f"  warning: git apply failed for {path}:\n{r.stderr}"
+                                )
+                                # still try to continue with final if nothing else works
+                                full.parent.mkdir(parents=True, exist_ok=True)
+                                full.write_bytes(st["final"])
+                    finally:
+                        os.unlink(patch_path)
+
+                run_git(repo, "add", "--", path)
+        else:
+            # Full-file staging (small files / deletions)
+            to_add = []
+            for p in plan.files:
+                full = repo / p
+                if full.exists() or full.is_symlink():
+                    to_add.append(p)
+                else:
+                    run_git(repo, "rm", "--ignore-unmatch", "-f", "--", p, check=False)
+            if to_add:
+                run_git(repo, "add", "--", *to_add)
 
         # Safety: make sure something is staged
         staged = run_git(repo, "diff", "--cached", "--name-only")
@@ -560,20 +829,29 @@ def apply_commits(
             tqdm.write("  (nothing staged – skipping)")
             continue
 
-        # Derive commit date from the source files' modification times so that
-        # a series of old archives produces a chronologically ordered history.
+        # Derive commit date from the source files' modification times
         env = base_env.copy()
-        mtime = _max_mtime_for_paths(repo, plan.files)
+        # For hunk commits prefer the final-file mtime (stored in large_state)
+        mtime = None
+        for p in plan.files:
+            if p in large_state and large_state[p]["final"]:
+                # use a synthetic mtime from the final bytes via the live file if present
+                full = repo / p
+                if full.exists():
+                    try:
+                        mtime = full.stat().st_mtime
+                    except OSError:
+                        pass
+        if mtime is None:
+            mtime = _max_mtime_for_paths(repo, plan.files)
         if mtime is not None:
             date_str = _format_git_date(mtime)
             env["GIT_AUTHOR_DATE"] = date_str
             env["GIT_COMMITTER_DATE"] = date_str
             tqdm.write(f"  date: {date_str} (from source file mtime)")
         else:
-            # Pure deletion commit – fall back to current time
             tqdm.write("  date: (current time – no surviving files for mtime)")
 
-        # Commit
         subprocess.run(
             [
                 "git",
@@ -587,6 +865,16 @@ def apply_commits(
             env=env,
         )
         tqdm.write("  committed.")
+
+    # After all commits, ensure large files match the final synced content
+    for path, st in large_state.items():
+        full = repo / path
+        if st["final"] and (not full.exists() or full.read_bytes() != st["final"]):
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(st["final"])
+            run_git(repo, "add", "--", path)
+            # if there is a remaining diff, it will show as dirty – user can fix;
+            # normally the last hunk commit should already match
 
 
 def main() -> None:
@@ -671,7 +959,7 @@ def main() -> None:
             print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
 
         print("\nAsking model for commit plan …")
-        plans = plan_commits(changes, args.url, args.model, args.api_key)
+        plans = plan_commits(changes, args.git, args.url, args.model, args.api_key)
 
         if not plans:
             print("Model returned empty plan.")
@@ -679,12 +967,18 @@ def main() -> None:
 
         print(f"\nPlanned {len(plans)} commit(s):")
         for i, p in enumerate(plans, 1):
-            line_sum = sum(
-                next((c.total_lines for c in changes if c.path == f), 0) for f in p.files
-            )
-            print(f"  {i}. [{line_sum} lines] {p.message}")
-            for f in p.files:
-                print(f"       - {f}")
+            if p.hunks:
+                print(f"  {i}. {p.message}")
+                for f, idxs in p.hunks.items():
+                    print(f"       - {f}  (hunks {idxs})")
+            else:
+                line_sum = sum(
+                    next((c.total_lines for c in changes if c.path == f), 0)
+                    for f in p.files
+                )
+                print(f"  {i}. [{line_sum} lines] {p.message}")
+                for f in p.files:
+                    print(f"       - {f}")
 
         if args.dry_run:
             print("\nDry-run finished. No commits were created.")
