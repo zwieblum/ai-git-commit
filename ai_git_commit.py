@@ -1060,20 +1060,134 @@ def apply_commits(
             # normally the last hunk commit should already match
 
 
+def list_local_branches(repo: Path) -> list[str]:
+    """Return local branch names (without refs/heads/)."""
+    r = run_git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def resolve_export_branch(repo: Path, name: str | None) -> str:
+    """Resolve which branch to export.
+
+    * ``None`` / ``__LAST__`` → branch that contains the most recent commit
+      (by committer date) among local branches; falls back to current HEAD branch.
+    * Otherwise treat *name* as a branch name, or as an archive basename
+      (with or without extension) matching ``branch_name_from_archive``.
+    """
+    branches = list_local_branches(repo)
+    if not branches:
+        raise SystemExit("No local branches found – nothing to export.")
+
+    if name is None or name == "__LAST__":
+        # Branch whose tip has the newest committer date
+        r = run_git(
+            repo,
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/heads/",
+            check=False,
+        )
+        ordered = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+        if ordered:
+            return ordered[0]
+        cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+        if cur.returncode == 0 and cur.stdout.strip() not in ("", "HEAD"):
+            return cur.stdout.strip()
+        raise SystemExit("Could not determine the last branch to export.")
+
+    # Exact branch match
+    if name in branches:
+        return name
+
+    # Archive-style name → strip extension and match
+    candidate = branch_name_from_archive(Path(name))
+    if candidate in branches:
+        return candidate
+
+    # Case-insensitive match
+    lower_map = {b.lower(): b for b in branches}
+    if name.lower() in lower_map:
+        return lower_map[name.lower()]
+    if candidate.lower() in lower_map:
+        return lower_map[candidate.lower()]
+
+    raise SystemExit(
+        f"No branch matching '{name}' (tried '{candidate}').\n"
+        f"  Available branches: {', '.join(branches)}"
+    )
+
+
+def export_archive(
+    repo: Path,
+    branch: str,
+    output: Path | None = None,
+    fmt: str = "zip",
+    prefix: str | None = None,
+) -> Path:
+    """Recreate an archive from the tree at *branch* using ``git archive``.
+
+    Returns the path of the written archive.
+    """
+    fmt = fmt.lower().strip()
+    if fmt in ("tar.gz", "tgz"):
+        git_format = "tar.gz"
+        ext = ".tar.gz"
+    elif fmt in ("tar",):
+        git_format = "tar"
+        ext = ".tar"
+    else:
+        git_format = "zip"
+        ext = ".zip"
+
+    if output is None:
+        output = Path(f"{branch}{ext}")
+    else:
+        output = output.expanduser().resolve()
+        if output.is_dir():
+            output = output / f"{branch}{ext}"
+
+    # Prefix so unpacking creates a single top-level directory (matches import strip)
+    if prefix is None:
+        prefix = f"{branch}/"
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Exporting branch '{branch}' → {output} ({git_format}) …")
+    cmd = [
+        "git",
+        "-C",
+        str(repo),
+        "archive",
+        f"--format={git_format}",
+        f"--prefix={prefix}",
+        f"--output={output}",
+        branch,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(
+            f"git archive failed:\n{r.stderr or r.stdout}"
+        )
+    size = output.stat().st_size if output.exists() else 0
+    print(f"  wrote {output} ({size} bytes)")
+    return output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sync a source directory into a Git repo and create AI-written commits "
-        f"(max ~{MAX_LINES_PER_COMMIT} changed lines per commit when possible)."
+        f"(max ~{MAX_LINES_PER_COMMIT} changed lines per commit when possible). "
+        "Also export/recreate archives from branches with --export."
     )
     parser.add_argument(
         "--url",
-        required=True,
-        help="OpenAI-compatible base URL, e.g. http://llamaserver:8080/v1",
+        default=None,
+        help="OpenAI-compatible base URL, e.g. http://llamaserver:8080/v1 (required for import)",
     )
     parser.add_argument(
         "--model",
-        required=True,
-        help="Model name, e.g. qwen3.5-coder",
+        default=None,
+        help="Model name, e.g. qwen3.5-coder (required for import)",
     )
     parser.add_argument(
         "--git",
@@ -1083,15 +1197,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--src",
-        required=True,
+        default=None,
         type=Path,
         help="Path to the newest source directory, or an archive "
-        "(.zip / .tar / .tar.gz / …) that will be unpacked automatically",
+        "(.zip / .tar / .tar.gz / …) that will be unpacked automatically (required for import)",
     )
     parser.add_argument(
         "--name",
-        required=True,
-        help='Committer identity, e.g. "Botter <the-great-ai@localhost.at>"',
+        default=None,
+        help='Committer identity, e.g. "Botter <the-great-ai@localhost.at>" (required for import)',
     )
     parser.add_argument(
         "--api-key",
@@ -1118,10 +1232,76 @@ def main() -> None:
         help="When --src is an archive, include the archive filename in every "
         "commit message (off by default).",
     )
+    parser.add_argument(
+        "--export",
+        nargs="?",
+        const="__LAST__",
+        default=None,
+        metavar="NAME",
+        help="Recreate an archive from the repository instead of importing. "
+        "With no NAME, exports the branch with the newest commit (last archive). "
+        "NAME may be a branch name or an archive basename (e.g. 013-llm-errors or "
+        "013-llm-errors.zip).",
+    )
+    parser.add_argument(
+        "--export-format",
+        default="zip",
+        choices=["zip", "tar", "tar.gz", "tgz"],
+        help="Archive format for --export (default: zip).",
+    )
+    parser.add_argument(
+        "--export-output",
+        type=Path,
+        default=None,
+        help="Output path for --export (default: <branch>.zip in the current directory).",
+    )
     args = parser.parse_args()
 
-    author_name, author_email = parse_author(args.name)
+    # ----- export mode -----
+    if args.export is not None:
+        if not args.git.is_dir() or not (
+            run_git(args.git, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip()
+            == "true"
+            if args.git.is_dir()
+            else False
+        ):
+            # validate without auto-creating
+            if not args.git.exists():
+                raise SystemExit(f"Git repository does not exist: {args.git}")
+            r = run_git(args.git, "rev-parse", "--is-inside-work-tree", check=False)
+            if r.returncode != 0 or r.stdout.strip() != "true":
+                raise SystemExit(f"Not a valid Git working tree: {args.git}")
+        branch = resolve_export_branch(
+            args.git, None if args.export == "__LAST__" else args.export
+        )
+        export_archive(
+            args.git,
+            branch,
+            output=args.export_output,
+            fmt=args.export_format,
+        )
+        return
+
     ensure_git_repo(args.git)
+
+    # ----- import mode -----
+    missing = [
+        flag
+        for flag, val in (
+            ("--url", args.url),
+            ("--model", args.model),
+            ("--src", args.src),
+            ("--name", args.name),
+        )
+        if not val
+    ]
+    if missing:
+        raise SystemExit(
+            "Import mode requires: " + ", ".join(missing) + "\n"
+            "(Or use --export [NAME] to recreate an archive from the repo.)"
+        )
+
+    author_name, author_email = parse_author(args.name)
 
     # Optional: refuse if there are already staged changes
     staged = run_git(args.git, "diff", "--cached", "--name-only")
