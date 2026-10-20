@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import requests
+from tqdm import tqdm
 
 MAX_LINES_PER_COMMIT = 200
 API_TIMEOUT = 120
@@ -256,19 +257,29 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             "--delete",
             "--exclude",
             ".git",
+            "--info=progress2",
             f"{src}/",
             f"{repo}/",
         ]
+        # rsync --info=progress2 writes live progress to stderr
         subprocess.run(cmd, check=True)
     else:
-        # Fallback: walk and copy, then remove extras
+        # Fallback: walk and copy with a progress bar, then remove extras
+        file_list: list[tuple[Path, Path]] = []
         for root, dirs, files in os.walk(src):
             rel = Path(root).relative_to(src)
             dest_dir = repo / rel
-            dest_dir.mkdir(parents=True, exist_ok=True)
             for f in files:
-                shutil.copy2(Path(root) / f, dest_dir / f)
+                file_list.append((Path(root) / f, dest_dir / f))
+
+        for src_file, dest_file in tqdm(
+            file_list, desc="Copying files", unit="file", leave=True
+        ):
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dest_file)
+
         # Remove files present in repo but not in src (skip .git)
+        to_remove: list[Path] = []
         for root, dirs, files in os.walk(repo, topdown=True):
             if Path(root).name == ".git" or ".git" in Path(root).parts:
                 dirs.clear()
@@ -277,8 +288,9 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             src_dir = src / rel
             for f in files:
                 if not (src_dir / f).exists():
-                    (Path(root) / f).unlink()
-            # remove empty dirs later if needed; git will handle
+                    to_remove.append(Path(root) / f)
+        for p in tqdm(to_remove, desc="Removing obsolete", unit="file", leave=False):
+            p.unlink()
 
 
 def has_commits(repo: Path) -> bool:
@@ -493,10 +505,12 @@ def apply_commits(
     base_env["GIT_COMMITTER_NAME"] = author_name
     base_env["GIT_COMMITTER_EMAIL"] = author_email
 
-    for i, plan in enumerate(plans, 1):
-        print(f"\n=== Commit {i}/{len(plans)} ===")
-        print(f"Message: {plan.message}")
-        print(f"Files: {', '.join(plan.files)}")
+    for i, plan in enumerate(
+        tqdm(plans, desc="Creating commits", unit="commit", leave=True), start=1
+    ):
+        tqdm.write(f"\n=== Commit {i}/{len(plans)} ===")
+        tqdm.write(f"Message: {plan.message}")
+        tqdm.write(f"Files: {', '.join(plan.files)}")
 
         # Stage only the listed paths
         # Use git add -- for both new and modified; for deletions use git rm
@@ -515,7 +529,7 @@ def apply_commits(
         # Safety: make sure something is staged
         staged = run_git(repo, "diff", "--cached", "--name-only")
         if not staged.stdout.strip():
-            print("  (nothing staged – skipping)")
+            tqdm.write("  (nothing staged – skipping)")
             continue
 
         # Derive commit date from the source files' modification times so that
@@ -526,10 +540,10 @@ def apply_commits(
             date_str = _format_git_date(mtime)
             env["GIT_AUTHOR_DATE"] = date_str
             env["GIT_COMMITTER_DATE"] = date_str
-            print(f"  date: {date_str} (from source file mtime)")
+            tqdm.write(f"  date: {date_str} (from source file mtime)")
         else:
             # Pure deletion commit – fall back to current time
-            print("  date: (current time – no surviving files for mtime)")
+            tqdm.write("  date: (current time – no surviving files for mtime)")
 
         # Commit
         subprocess.run(
@@ -544,7 +558,7 @@ def apply_commits(
             check=True,
             env=env,
         )
-        print("  committed.")
+        tqdm.write("  committed.")
 
 
 def main() -> None:
