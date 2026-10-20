@@ -49,3 +49,11 @@ Added two features:
 
 1. **Extra directory layer detection** – if a plain `--src` directory wraps the content in one or more extra top-level directories that overlap with the repository root, the program prints a clear warning and exits without syncing.
 2. **Archive support** – `--src` may be a `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, etc. The archive is extracted to a temporary directory, any single leading directory layers are stripped, the content is synced as usual, and the temporary tree is removed afterwards.
+
+**User:**
+
+the git commits must represent the file date from the file in "--src", so that the git repository can be built from a series of old archives in correct cronological order.
+
+**Assistant:**
+
+Each commit now gets its author and committer date from the newest modification time of the files that belong to that commit (mtimes are preserved from `--src` / the archive by rsync -a / copy2 / zipfile / tarfile). Pure-deletion commits fall back to the current time. This allows rebuilding history from a sequence of old archives in chronological order.
