@@ -17,6 +17,10 @@ commits whose messages are written by an LLM (OpenAI-compatible API).
 - Tries to keep the total changed lines (insertions + deletions) of each commit
   **≤ 200**. A single file that exceeds the limit is committed alone.
 - Sets both author and committer from the supplied `--name` identity.
+- Sets each commit’s author/committer **date** from the newest modification
+  time of the files belonging to that commit (preserved from `--src` / the
+  archive).  This lets you rebuild history from a series of old archives in
+  correct chronological order.
 - Optional `--dry-run` to preview the plan without writing.
 
 ## Requirements
