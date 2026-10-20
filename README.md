@@ -28,20 +28,6 @@ and chronologically ordered by the original file modification times.
 
 ---
 
-## Export / recreate archives
-
-```bash
-# Last imported archive (branch with newest commit)
-python ai_git_commit.py --git /path/to/repo --export
-
-# Specific branch or archive name
-python ai_git_commit.py --git /path/to/repo --export 013-llm-errors
-python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
-
-# Format and output path
-python ai_git_commit.py --git /path/to/repo --export --export-format tar.gz \
-  --export-output /tmp/out.tar.gz
-```
 
 ## Requirements
 
@@ -92,28 +78,52 @@ chmod +x ai_git_commit.py   # optional
 
 ## Usage
 
+### Import mode
+
+Requires `--git`, `--url`, `--model`, `--src`, and `--name`.
+
 ```bash
 python ai_git_commit.py \
-  --url  http://llamaserver:8080/v1 \
-  --model qwen3.5-coder \
   --git  /path/to/the/repository \
-  --src  /path/to/the/new/content \
-  --name "Botter <the-great-ai@localhost.at>"
+  --url  http://localhost:8080/v1 \
+  --model qwen2.5-coder \
+  --src  /path/to/the/new/content_or_archive.zip \
+  --name "Botter <ai@localhost>"
+```
+
+### Export mode
+
+Requires only `--git` and `--export`. **Does not** need `--url`, `--model`, `--src`, or `--name`.
+
+```bash
+# Last archive (branch with the newest commit)
+python ai_git_commit.py --git /path/to/repo --export
+
+# Specific branch or archive name
+python ai_git_commit.py --git /path/to/repo --export 013-llm-errors
+python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
+
+# Format and output path
+python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
+  --export-format tar.gz --export-output /tmp/out.tar.gz
 ```
 
 ### Arguments
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--url` | yes | OpenAI-compatible base URL, e.g. `http://llamaserver:8080/v1` |
-| `--model` | yes | Model name, e.g. `qwen3.5-coder` |
-| `--git` | yes | Path to the local Git repository (created if missing) |
-| `--src` | yes | Newest source directory **or** archive (`.zip` / `.tar*` …) |
-| `--name` | yes | Committer identity: `"Name <email@domain>"` |
-| `--api-key` | no | API key (default: env `OPENAI_API_KEY`) |
-| `--branch` | no | Checkout or create branch NAME before committing. If omitted and `--src` is an archive, the archive name without extension is used. |
-| `--mention-archive` | no | Include archive filename in commit messages (off by default) |
-| `--dry-run` | no | Show the planned commits without writing |
+| Flag | Import | Export | Description |
+|------|:------:|:------:|-------------|
+| `--git` | **yes** | **yes** | Path to the local Git repository (created on import if missing) |
+| `--url` | **yes** | no | OpenAI-compatible base URL, e.g. `http://localhost:8080/v1` |
+| `--model` | **yes** | no | Model name, e.g. `qwen2.5-coder` |
+| `--src` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
+| `--name` | **yes** | no | Committer identity: `"Name <email@domain>"` |
+| `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
+| `--branch` | no | no | Branch to commit on (default: archive basename when `--src` is an archive) |
+| `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
+| `--dry-run` | no | no | Plan commits only; do not write |
+| `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
+| `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
+| `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory) |
 
 ### Example – rebuild history from old archives
 
