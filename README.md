@@ -15,7 +15,7 @@ and chronologically ordered by the original file modification times.
 | Feature | Description |
 |--------|-------------|
 | **Source flexibility** | `--src` can be a plain directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, …). |
-| **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. |
+| **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. The archive filename is included in every commit message. |
 | **Extra-layer guard** | If a plain directory nests content one or more levels deeper than the repository root (and names overlap), the program **warns and stops**. |
 | **Auto-init** | If `--git` does not exist or is not yet a repository, the directory is created and `git init` is run. |
 | **LLM commit messages** | An OpenAI-compatible `/v1/chat/completions` endpoint produces a JSON plan of functionally coherent commits. |
