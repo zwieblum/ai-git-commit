@@ -1175,85 +1175,115 @@ def export_archive(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Sync a source directory into a Git repo and create AI-written commits "
-        f"(max ~{MAX_LINES_PER_COMMIT} changed lines per commit when possible). "
-        "Also export/recreate archives from branches with --export."
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
+            "or export/recreate archives from existing branches.\n"
+            "\n"
+            "Two modes (only --git is always required):\n"
+            "\n"
+            "  IMPORT  – sync --src into --git and create commits (needs LLM)\n"
+            "            requires: --git --url --model --src --name\n"
+            "\n"
+            "  EXPORT  – recreate a zip/tar from a branch\n"
+            "            requires: --git --export [NAME]\n"
+            "            does NOT need --url, --model, --src, or --name"
+        ),
+        epilog=(
+            "examples:\n"
+            "  # Import an archive (creates branch from archive name)\n"
+            "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
+            "      --model qwen2.5-coder --src snapshot-2020.zip \\\n"
+            "      --name 'Botter <ai@localhost>'\n"
+            "\n"
+            "  # Export the last imported archive (newest branch tip)\n"
+            "  %(prog)s --git ./repo --export\n"
+            "\n"
+            "  # Export a specific branch / archive name\n"
+            "  %(prog)s --git ./repo --export 013-llm-errors\n"
+            "  %(prog)s --git ./repo --export 013-llm-errors.zip \\\n"
+            "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
+        ),
     )
-    parser.add_argument(
-        "--url",
-        default=None,
-        help="OpenAI-compatible base URL, e.g. http://llamaserver:8080/v1 (required for import)",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Model name, e.g. qwen3.5-coder (required for import)",
-    )
+    # --- always ---
     parser.add_argument(
         "--git",
         required=True,
         type=Path,
-        help="Path to the local Git repository",
+        help="Path to the local Git repository (created on import if missing)",
     )
-    parser.add_argument(
+    # --- import mode ---
+    import_opts = parser.add_argument_group(
+        "import mode (required together unless --export is used)"
+    )
+    import_opts.add_argument(
+        "--url",
+        default=None,
+        help="OpenAI-compatible base URL, e.g. http://localhost:8080/v1",
+    )
+    import_opts.add_argument(
+        "--model",
+        default=None,
+        help="Model name, e.g. qwen2.5-coder-7b-instruct-q4_k_m",
+    )
+    import_opts.add_argument(
         "--src",
         default=None,
         type=Path,
-        help="Path to the newest source directory, or an archive "
-        "(.zip / .tar / .tar.gz / …) that will be unpacked automatically (required for import)",
+        help="Source directory or archive (.zip / .tar / .tar.gz / …)",
     )
-    parser.add_argument(
+    import_opts.add_argument(
         "--name",
         default=None,
-        help='Committer identity, e.g. "Botter <the-great-ai@localhost.at>" (required for import)',
+        help='Committer identity, e.g. "Botter <ai@localhost>"',
     )
-    parser.add_argument(
+    import_opts.add_argument(
         "--api-key",
         default=os.environ.get("OPENAI_API_KEY"),
-        help="Optional API key (or set OPENAI_API_KEY). Many local servers ignore it.",
+        help="API key (or env OPENAI_API_KEY); often unused by local servers",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show the planned commits without writing anything",
-    )
-    parser.add_argument(
+    import_opts.add_argument(
         "--branch",
         default=None,
         metavar="NAME",
-        help="Checkout or create branch NAME before committing "
-        "(e.g. --branch import/2020-snapshot). Commits are made on that branch. "
-        "When --src is an archive and --branch is omitted, the archive basename "
-        "(without extension) is used automatically.",
+        help="Branch to commit on (default: archive basename if --src is an archive)",
     )
-    parser.add_argument(
+    import_opts.add_argument(
         "--mention-archive",
         action="store_true",
-        help="When --src is an archive, include the archive filename in every "
-        "commit message (off by default).",
+        help="Append the archive filename to each commit message (default: off)",
     )
-    parser.add_argument(
+    import_opts.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan commits only; do not sync or write commits",
+    )
+    # --- export mode ---
+    export_opts = parser.add_argument_group(
+        "export mode (does not need --url / --model / --src / --name)"
+    )
+    export_opts.add_argument(
         "--export",
         nargs="?",
         const="__LAST__",
         default=None,
         metavar="NAME",
-        help="Recreate an archive from the repository instead of importing. "
-        "With no NAME, exports the branch with the newest commit (last archive). "
-        "NAME may be a branch name or an archive basename (e.g. 013-llm-errors or "
-        "013-llm-errors.zip).",
+        help="Export mode: recreate archive from branch. "
+        "Omit NAME for the branch with the newest commit; "
+        "NAME may be a branch or archive basename (e.g. 013-llm-errors[.zip])",
     )
-    parser.add_argument(
+    export_opts.add_argument(
         "--export-format",
         default="zip",
         choices=["zip", "tar", "tar.gz", "tgz"],
-        help="Archive format for --export (default: zip).",
+        help="Archive format for --export (default: zip)",
     )
-    parser.add_argument(
+    export_opts.add_argument(
         "--export-output",
         type=Path,
         default=None,
-        help="Output path for --export (default: <branch>.zip in the current directory).",
+        metavar="PATH",
+        help="Output file or directory for --export (default: <branch>.zip in cwd)",
     )
     args = parser.parse_args()
 
