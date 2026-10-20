@@ -22,7 +22,7 @@ and chronologically ordered by the original file modification times.
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--src` / the archive). |
 | **Progress feedback** | Progress bars (via `tqdm`) for file copy (fallback path) and for the commit-creation loop; `rsync --info=progress2` when rsync is used. |
-| **Branch** | `--branch NAME` checks out or creates the given branch before committing. |
+| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--src` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
 
 ---
@@ -95,7 +95,7 @@ python ai_git_commit.py \
 | `--src` | yes | Newest source directory **or** archive (`.zip` / `.tar*` …) |
 | `--name` | yes | Committer identity: `"Name <email@domain>"` |
 | `--api-key` | no | API key (default: env `OPENAI_API_KEY`) |
-| `--branch` | no | Checkout or create branch NAME before committing |
+| `--branch` | no | Checkout or create branch NAME before committing. If omitted and `--src` is an archive, the archive name without extension is used. |
 | `--dry-run` | no | Show the planned commits without writing |
 
 ### Example – rebuild history from old archives
