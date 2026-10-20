@@ -177,6 +177,24 @@ def is_archive(path: Path) -> bool:
     return path.is_file() and any(name.endswith(s) for s in ARCHIVE_SUFFIXES)
 
 
+def branch_name_from_archive(path: Path) -> str:
+    """Derive a Git branch name from an archive filename (strip known extensions)."""
+    name = path.name
+    lower = name.lower()
+    # Strip longest matching archive suffix first (e.g. .tar.gz before .gz)
+    for suffix in sorted(ARCHIVE_SUFFIXES, key=len, reverse=True):
+        if lower.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    # Sanitise for Git branch rules: no spaces, no leading '-', etc.
+    name = name.strip().replace(" ", "-")
+    name = re.sub(r"[~^:?*\[\\]+", "-", name)
+    name = re.sub(r"-+", "-", name).strip("-")
+    if not name or name.startswith("-"):
+        name = "import-archive"
+    return name
+
+
 def _strip_to_content_root(extracted: Path) -> Path:
     """
     If the extracted tree contains exactly one top-level directory (and no
@@ -966,7 +984,9 @@ def main() -> None:
         default=None,
         metavar="NAME",
         help="Checkout or create branch NAME before committing "
-        "(e.g. --branch import/2020-snapshot). Commits are made on that branch.",
+        "(e.g. --branch import/2020-snapshot). Commits are made on that branch. "
+        "When --src is an archive and --branch is omitted, the archive basename "
+        "(without extension) is used automatically.",
     )
     args = parser.parse_args()
 
@@ -980,8 +1000,13 @@ def main() -> None:
             "Repository has staged changes. Please commit or unstage them first."
         )
 
-    if args.branch:
-        ensure_branch(args.git, args.branch)
+    # Branch selection: explicit --branch wins; otherwise derive from archive name
+    branch = args.branch
+    if branch is None and is_archive(args.src.expanduser().resolve()):
+        branch = branch_name_from_archive(args.src)
+        print(f"Archive detected – using branch name '{branch}' (override with --branch)")
+    if branch:
+        ensure_branch(args.git, branch)
 
     with resolve_source(args.src) as effective_src:
         # Warn & abort if the (plain) source tree has extra directory layers
