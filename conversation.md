@@ -2,16 +2,12 @@
 
 **User:**
 
-i need a program that creates commits the differences from a new local directory to a local git repository. … model writes commit messages … ≤200 lines per commit …
-
-**Assistant:**
-
-Created the program and iterated through features: auto-init, archives, extra-dir guard, file dates, progress bars, extensive README, GPL-3 + copyright, functional hunk splitting for large files.
+… (full feature history: LLM commits, auto-init, archives, extra-dir guard, file dates, progress, README, GPL-3, hunk split, --branch) …
 
 **User:**
 
-add an option to mark a branch
+when an archive is given then automatically use the archives name (without extension) as branch name. --branch overrides this.
 
 **Assistant:**
 
-Added `--branch NAME`: checks out the branch if it exists, or creates it (including on an empty repo so the first commit lands on that branch). All subsequent commits are made on that branch.
+When `--src` is an archive and `--branch` is not given, the branch name is derived from the archive basename with the extension stripped (e.g. `snapshot-2020.zip` → branch `snapshot-2020`). Explicit `--branch` always wins.
