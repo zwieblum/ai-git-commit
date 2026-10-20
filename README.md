@@ -80,7 +80,7 @@ chmod +x ai_git_commit.py   # optional
 
 ### Import mode
 
-Requires `--git`, `--url`, `--model`, `--src`, and `--name`.
+Requires `--git`, `--url`, `--src`, and `--name`. `--model` is optional (defaults to the first/active model from `GET {url}/models`).
 
 ```bash
 python ai_git_commit.py \
@@ -114,7 +114,7 @@ python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
 |------|:------:|:------:|-------------|
 | `--git` | **yes** | **yes** | Path to the local Git repository (created on import if missing) |
 | `--url` | **yes** | no | OpenAI-compatible base URL, e.g. `http://localhost:8080/v1` |
-| `--model` | **yes** | no | Model name, e.g. `qwen2.5-coder` |
+| `--model` | no | no | Model name (default: first/active model from `GET {url}/models`) |
 | `--src` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
 | `--name` | **yes** | no | Committer identity: `"Name <email@domain>"` |
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
