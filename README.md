@@ -313,6 +313,10 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
 
+### Branch listing
+
+When a run finishes successfully (import, dry-run, "no changes", or export) the program ends by printing all branches of the repository, exactly like `git branch --all` (current branch marked with `*`). Runs that abort with an error do not print the list.
+
 ### Export wrapper directory
 
 By default `--export` omits the `<branch>/` prefix so the archive contains the files directly at its root (`--strip`, on by default). `--no-strip` restores the previous layout with a single `<branch>/` top-level directory. Both options are only valid together with `--export`. Re-importing either layout works (the importer only strips wrappers if there are any).
