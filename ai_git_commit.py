@@ -1321,8 +1321,13 @@ def export_archive(
     output: Path | None = None,
     fmt: str = "zip",
     prefix: str | None = None,
+    strip: bool = False,
 ) -> Path:
     """Recreate an archive from the tree at *branch* using ``git archive``.
+
+    By default all files are placed below a single top-level directory named
+    after the branch.  With ``strip=True`` that directory is omitted, so the
+    files sit directly at the root of the archive.
 
     Returns the path of the written archive.
     """
@@ -1337,15 +1342,21 @@ def export_archive(
         git_format = "zip"
         ext = ".zip"
 
+    # Always resolve against the *current working directory*.  A relative
+    # path would otherwise be interpreted by ``git -C <repo> archive`` relative
+    # to the repository, i.e. the archive would end up inside the repo.
     if output is None:
-        output = Path(f"{branch}{ext}")
+        output = Path.cwd() / f"{branch}{ext}"
     else:
         output = output.expanduser().resolve()
         if output.is_dir():
             output = output / f"{branch}{ext}"
 
-    # Prefix so unpacking creates a single top-level directory (matches import strip)
-    if prefix is None:
+    # Prefix so unpacking creates a single top-level directory (matches import
+    # strip).  --strip drops it: files are stored at the archive root.
+    if strip:
+        prefix = ""
+    elif prefix is None:
         prefix = f"{branch}/"
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1356,7 +1367,7 @@ def export_archive(
         str(repo),
         "archive",
         f"--format={git_format}",
-        f"--prefix={prefix}",
+        *([f"--prefix={prefix}"] if prefix else []),
         f"--output={output}",
         branch,
     ]
@@ -1405,6 +1416,9 @@ def main() -> None:
             "  %(prog)s --git ./repo --export 013-llm-errors\n"
             "  %(prog)s --git ./repo --export 013-llm-errors.zip \\\n"
             "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
+            "\n"
+            "  # Export without the top-level <branch>/ directory\n"
+            "  %(prog)s --git ./repo --export 013-llm-errors --strip\n"
         ),
     )
     # --- always ---
@@ -1487,7 +1501,16 @@ def main() -> None:
         metavar="PATH",
         help="Output file or directory for --export (default: <branch>.zip in cwd)",
     )
+    export_opts.add_argument(
+        "--strip",
+        action="store_true",
+        help="With --export: strip all directories from the archive, i.e. do "
+        "not wrap the files in a top-level <branch>/ directory",
+    )
     args = parser.parse_args()
+
+    if args.strip and args.export is None:
+        parser.error("--strip can only be used together with --export")
 
     # ----- export mode -----
     if args.export is not None:
@@ -1511,6 +1534,7 @@ def main() -> None:
             branch,
             output=args.export_output,
             fmt=args.export_format,
+            strip=args.strip,
         )
         return
 
