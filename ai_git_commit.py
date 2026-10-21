@@ -101,14 +101,68 @@ def run_git(repo: Path, *args: str, check: bool = True, capture: bool = True) ->
     )
 
 
+_EMAIL_RE = re.compile(r"^[^@\s<>,;]+@[^@\s<>,;]+$")
+
+
+def _slug(text: str) -> str:
+    """Make a safe e-mail local part from free text ('Bob Smith' -> 'bob.smith')."""
+    out = re.sub(r"[^a-z0-9._+-]+", ".", text.lower()).strip(".")
+    return re.sub(r"\.{2,}", ".", out) or "unknown"
+
+
 def parse_author(name_email: str) -> tuple[str, str]:
-    """Parse 'Name <email@domain>' into (name, email)."""
-    m = re.match(r"^\s*(.*?)\s*<([^>]+)>\s*$", name_email)
-    if not m:
-        raise ValueError(
-            f"Invalid --name format. Expected 'Name <email@domain>', got: {name_email!r}"
-        )
-    return m.group(1).strip(), m.group(2).strip()
+    """Parse the --name value into ``(name, email)``, leniently.
+
+    Accepted forms (first match wins):
+
+    * ``Name <user@host>``   – the canonical form
+    * ``<user@host>``        – name is derived from the local part (``user``)
+    * ``user@host``          – dito (bare e-mail)
+    * ``Name user@host``     – e-mail without angle brackets
+    * ``Name <garbage>``     – bracket content that is not an e-mail is
+      turned into ``garbage@localhost``
+    * ``Name``               – e-mail becomes ``<name-slug>@localhost``
+
+    Anything inferred is announced with a short note; only a completely empty
+    value is an error.  Characters Git refuses in identities (``<``, ``>``,
+    line breaks) are removed.
+    """
+    raw = " ".join((name_email or "").split())  # collapse whitespace/newlines
+    if not raw:
+        raise SystemExit("--name must not be empty (expected 'Name <email@domain>')")
+
+    name = email = ""
+    m = re.match(r"^(.*?)\s*<([^<>]*)>?\s*$", raw)  # tolerate a missing '>'
+    if m:
+        name, inner = m.group(1).strip(), m.group(2).strip()
+        if _EMAIL_RE.match(inner):
+            email = inner
+        elif inner:
+            email = f"{_slug(inner)}@localhost"
+    else:
+        tokens = [t for t in re.split(r"[\s,;]+", raw) if t]
+        # last token that looks like an e-mail address
+        for k in range(len(tokens) - 1, -1, -1):
+            cand = tokens[k].strip("<>")
+            if _EMAIL_RE.match(cand):
+                email = cand
+                name = " ".join(tokens[:k] + tokens[k + 1:])
+                break
+        else:
+            name = raw
+
+    name = name.replace("<", "").replace(">", "").strip().strip("\"'").strip()
+    if not name and email:
+        name = email.split("@", 1)[0]
+    if not email:
+        email = f"{_slug(name)}@localhost"
+    if not name:
+        name = "unknown"
+
+    canonical = f"{name} <{email}>"
+    if canonical != raw:
+        print(f"Note: --name {name_email!r} interpreted as {canonical!r}")
+    return name, email
 
 
 def ensure_git_repo(repo: Path) -> None:
@@ -1452,7 +1506,9 @@ def _run() -> Path:
     import_opts.add_argument(
         "--name",
         default=None,
-        help='Committer identity, e.g. "Botter <ai@localhost>"',
+        help='Committer identity, e.g. "Botter <ai@localhost>". Also accepted: '
+        '"ai@localhost" (name = part before the @), "Botter ai@localhost" and '
+        'a bare "Botter" (email becomes botter@localhost)',
     )
     import_opts.add_argument(
         "--api-key",
