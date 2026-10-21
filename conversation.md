@@ -117,3 +117,13 @@ if an --src points to an archive and a branche with that name (witout extension)
 **Assistant:**
 
 In import mode, when `--src` is an archive and no `--branch` is given, the derived branch name (archive name without extension, e.g. `013-llm-errors.zip` → `013-llm-errors`) is checked against the local branches (`branch_exists()`, `git show-ref`). If it exists, the program exits with an error before anything else happens (no LLM call, no checkout, no sync, no commits; also with `--dry-run`), e.g. `Error: branch '001-first' already exists in repo – refusing to import archive '001-first.zip' again.` An explicit `--branch NAME` still lets you add to an existing branch, and directory sources are unaffected. Note: a failed import that already created the branch (e.g. LLM server unreachable) leaves that branch behind, so a retry of the same archive is now refused – the error message says to remove it with `git branch -D NAME` (or use `--branch`). Tested with zip and tar.gz of the same name, `--dry-run`, explicit `--branch`, and a new name. README ("Existing branch check") updated.
+
+---
+
+**User:**
+
+the list of bransches shoulfd only be printed when the user asks for it ("--list", ony needs "--git"). After adding to the repository only print the last branch name. After export print nothing.
+
+**Assistant:**
+
+Removed the automatic `git branch --all` output. New `--list` option (needs only `--git`, never creates the repo, cannot be combined with `--export`/`--src`) prints exactly the `git branch --all` output (`No branches found.` for an empty repo). After an import that created commits, only the name of the branch the commits went to is printed, as the very last line (after the temporary-directory cleanup message); dry-runs and "no changes" runs print nothing branch-related. Export prints no branch information (only its own `Exporting …` / `wrote …` lines, which were there before; say if you want those silenced too). Also factored the repo validation into `require_git_repo()`. Tested: import (zip and directory), dry-run, no-changes, export, `--list` (normal, missing path, non-repo, empty repo, with `--export`). README ("List mode", "Branch output") and `--help` updated.
