@@ -87,3 +87,13 @@ using llama-server, what settings would be the best settings for model "qwen2.5-
 can these settings live inside a "model.ini"?
 
 **Assistant:** Yes, via `llama-server --models-preset model.ini --models-max 1` (router mode): one section per model, section name = model id, keys = long CLI flags without dashes, absolute paths only, `[*]` for shared defaults, restart to reload.
+
+---
+
+**User:**
+
+when the program has finshed successfully, give a list of all branches like "git branch --all"
+
+**Assistant:**
+
+After every successful run (import, dry-run, "no changes detected", export) the program now prints `git branch --all` output (`print_branches()`), under the heading "Branches (git branch --all):". The old `main()` body became `_run()`, which returns the repo path on each successful exit; `main()` prints the list afterwards. Runs that fail via `SystemExit`/exceptions don't print it. Tested against a mock OpenAI-compatible server: import, dry-run, identical re-import, export, and the error path. README updated.
