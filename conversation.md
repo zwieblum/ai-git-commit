@@ -48,3 +48,16 @@ Cause: `ensure_branch()` ran `git checkout -b NEW` from whatever HEAD was checke
 **Assistant:**
 
 Removed `__pycache__` from the project and added a `.gitignore` (`__pycache__/`, `*.py[cod]`). In `ai_git_commit.py`, sync now excludes `__pycache__`/`*.pyc`/`*.pyo` (rsync and fallback copy), deletes any already present in the repo (tracked ones become a normal deletion commit), and `collect_changes()` ignores new bytecode files. Tested with the fallback copy path; rsync is not installed in the test environment, so the rsync flags were not run.
+
+---
+
+**User:**
+
+* the exported archive is created in the current working directory, not inside the repository.
+* add an option "--strip" that when it's given strips the archive of all trailing directories.
+
+**Assistant:**
+
+Cause of the first problem: `export_archive()` passed a relative `--output` to `git -C <repo> archive`, which resolves relative paths against the repository, so the default `<branch>.zip` was written inside the repo. The default (and any relative path) is now resolved against the current working directory, so the archive is created there, not in the repository.
+
+Added `--strip` (export mode only; error if used without `--export`). It omits the top-level `<branch>/` directory, so the archive holds the files directly at its root (works for zip, tar, tar.gz/tgz). I read "trailing directories" as the wrapper directory around the files (the leading path component). Without `--strip` the behaviour is unchanged (`<branch>/…`). Tested with zip, tar and tar.gz, with and without `--strip`, with `--export-output` pointing at a directory, and the `--strip`-without-`--export` error; tqdm was stubbed in the sandbox. README and `--help` epilog updated.
