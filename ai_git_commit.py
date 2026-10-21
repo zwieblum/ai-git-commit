@@ -165,6 +165,32 @@ def parse_author(name_email: str) -> tuple[str, str]:
     return name, email
 
 
+def require_git_repo(repo: Path) -> None:
+    """Exit with an error unless *repo* is an existing Git working tree
+    (unlike ``ensure_git_repo`` this never creates anything)."""
+    if not repo.exists():
+        raise SystemExit(f"Git repository does not exist: {repo}")
+    r = run_git(repo, "rev-parse", "--is-inside-work-tree", check=False)
+    if r.returncode != 0 or r.stdout.strip() != "true":
+        raise SystemExit(f"Not a valid Git working tree: {repo}")
+
+
+def list_branches(repo: Path) -> None:
+    """Print all branches exactly like ``git branch --all``."""
+    r = run_git(repo, "branch", "--all", "--no-color", check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"Could not list branches: {r.stderr.strip()}")
+    if r.stdout.strip():
+        print(r.stdout.rstrip("\n"))
+    else:
+        print("No branches found.")
+
+
+def current_branch(repo: Path) -> str:
+    r = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def ensure_git_repo(repo: Path) -> None:
     """Ensure *repo* is a Git working tree. Create the directory and run
     ``git init`` if it does not exist or is not yet a repository."""
@@ -1439,8 +1465,7 @@ def export_archive(
     return output
 
 
-def _run() -> Path:
-    """Run the program; returns the repository path on success."""
+def main() -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
@@ -1475,6 +1500,9 @@ def _run() -> Path:
             "  %(prog)s --git ./repo --export 013-llm-errors\n"
             "  %(prog)s --git ./repo --export 013-llm-errors.zip \\\n"
             "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
+            "\n"
+            "  # List all branches (like 'git branch --all'); needs only --git\n"
+            "  %(prog)s --git ./repo --list\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
             "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
@@ -1536,6 +1564,16 @@ def _run() -> Path:
         help="Plan commits only; do not sync or write commits",
     )
     # --- export mode ---
+    list_opts = parser.add_argument_group(
+        "list mode (needs only --git)"
+    )
+    list_opts.add_argument(
+        "--list",
+        action="store_true",
+        help="Print all branches of the repository like 'git branch --all' "
+        "and exit (nothing else is printed; no branch listing is shown after "
+        "an import or export)",
+    )
     export_opts = parser.add_argument_group(
         "export mode (does not need --url / --model / --src / --name)"
     )
@@ -1577,20 +1615,17 @@ def _run() -> Path:
     if args.strip is None:
         args.strip = True  # default: files at the archive root
 
+    # ----- list mode -----
+    if args.list:
+        if args.export is not None or args.src is not None:
+            parser.error("--list cannot be combined with --export or --src")
+        require_git_repo(args.git)
+        list_branches(args.git)
+        return
+
     # ----- export mode -----
     if args.export is not None:
-        if not args.git.is_dir() or not (
-            run_git(args.git, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip()
-            == "true"
-            if args.git.is_dir()
-            else False
-        ):
-            # validate without auto-creating
-            if not args.git.exists():
-                raise SystemExit(f"Git repository does not exist: {args.git}")
-            r = run_git(args.git, "rev-parse", "--is-inside-work-tree", check=False)
-            if r.returncode != 0 or r.stdout.strip() != "true":
-                raise SystemExit(f"Not a valid Git working tree: {args.git}")
+        require_git_repo(args.git)  # validate without auto-creating
         branch = resolve_export_branch(
             args.git, None if args.export == "__LAST__" else args.export
         )
@@ -1601,7 +1636,7 @@ def _run() -> Path:
             fmt=args.export_format,
             strip=args.strip,
         )
-        return args.git
+        return
 
     ensure_git_repo(args.git)
 
@@ -1667,6 +1702,7 @@ def _run() -> Path:
             "syncing would delete it. Move the source outside the repository."
         )
 
+    committed = False
     with resolve_source(args.src) as effective_src:
         if not effective_src.is_dir():
             raise SystemExit(
@@ -1692,7 +1728,7 @@ def _run() -> Path:
         changes = collect_changes(args.git)
         if not changes:
             print("No changes detected. Nothing to commit.")
-            return args.git
+            return
 
         print(f"Found {len(changes)} changed path(s):")
         for c in changes:
@@ -1710,7 +1746,7 @@ def _run() -> Path:
 
         if not plans:
             print("Model returned empty plan.")
-            return args.git
+            return
 
         print(f"\nPlanned {len(plans)} commit(s):")
         for i, p in enumerate(plans, 1):
@@ -1729,25 +1765,18 @@ def _run() -> Path:
 
         if args.dry_run:
             print("\nDry-run finished. No commits were created.")
-            return args.git
+            return
 
         apply_commits(args.git, plans, author_name, author_email)
         print("\nDone.")
-    return args.git
+        committed = True
 
-
-def print_branches(repo: Path) -> None:
-    """Print all branches like ``git branch --all`` (called after success)."""
-    r = run_git(repo, "branch", "--all", "--no-color", check=False)
-    if r.returncode != 0 or not r.stdout.strip():
-        return
-    print("\nBranches (git branch --all):")
-    print(r.stdout.rstrip("\n"))
-
-
-def main() -> None:
-    repo = _run()  # errors exit via SystemExit and never reach the listing
-    print_branches(repo)
+    # Only the name of the branch the commits went to; printed after the
+    # temporary-directory cleanup so it really is the last line of output.
+    if committed:
+        last = current_branch(args.git)
+        if last:
+            print(last)
 
 
 if __name__ == "__main__":
