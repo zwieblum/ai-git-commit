@@ -107,3 +107,13 @@ when an email is not given in the form "NAME <xx qyyy>", then the program failes
 **Assistant:**
 
 `parse_author()` used to raise `ValueError` (traceback) unless `--name` was exactly `Name <email>`. It is now lenient: `xx@yyy.zz` / `<xx@yyy.zz>` → name `xx`, email `xx@yyy.zz`; `Name xx@yyy.zz` (no brackets), `Name <xx@yyy.zz` (missing `>`), `Name <not an email>` (→ `not.an.email@localhost`) and a bare `Name` (→ `name@localhost`) also work. A one-line note shows how the value was interpreted; only an empty `--name` is an error (clean message, no traceback). Verified with a table of inputs and an end-to-end import with `--name xx@yyy.zz` (git author/committer = `xx <xx@yyy.zz>`). README ("Identity formats") and `--help` updated.
+
+---
+
+**User:**
+
+if an --src points to an archive and a branche with that name (witout extension) already exists, do not add it to the repository but give an error message
+
+**Assistant:**
+
+In import mode, when `--src` is an archive and no `--branch` is given, the derived branch name (archive name without extension, e.g. `013-llm-errors.zip` → `013-llm-errors`) is checked against the local branches (`branch_exists()`, `git show-ref`). If it exists, the program exits with an error before anything else happens (no LLM call, no checkout, no sync, no commits; also with `--dry-run`), e.g. `Error: branch '001-first' already exists in repo – refusing to import archive '001-first.zip' again.` An explicit `--branch NAME` still lets you add to an existing branch, and directory sources are unaffected. Note: a failed import that already created the branch (e.g. LLM server unreachable) leaves that branch behind, so a retry of the same archive is now refused – the error message says to remove it with `git branch -D NAME` (or use `--branch`). Tested with zip and tar.gz of the same name, `--dry-run`, explicit `--branch`, and a new name. README ("Existing branch check") updated.
