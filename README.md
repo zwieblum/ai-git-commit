@@ -118,10 +118,11 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits:
+Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. When `--git` is the **only** option given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --git /path/to/repo --list
+python ai_git_commit.py --git /path/to/repo          # same thing
 ```
 
 `--list` cannot be combined with `--export` or `--src`, and it never creates the repository.
@@ -142,7 +143,7 @@ python ai_git_commit.py --git /path/to/repo --list
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
-| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git` |
+| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git` and is assumed when `--git` is the only option |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
