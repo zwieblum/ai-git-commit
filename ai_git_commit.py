@@ -210,6 +210,13 @@ def latest_release_branch(repo: Path) -> str | None:
     return ordered[0]
 
 
+def branch_exists(repo: Path, branch: str) -> bool:
+    """True if a *local* branch named *branch* exists (an unborn HEAD does not count)."""
+    return run_git(
+        repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
+    ).returncode == 0
+
+
 def ensure_branch(repo: Path, branch: str) -> None:
     """Checkout *branch*, creating it if it does not exist.
 
@@ -231,10 +238,7 @@ def ensure_branch(repo: Path, branch: str) -> None:
         return
 
     # Does the branch already exist?
-    exists = run_git(
-        repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
-    )
-    if exists.returncode == 0:
+    if branch_exists(repo, branch):
         print(f"Checking out existing branch '{branch}' …")
         run_git(repo, "checkout", branch)
         return
@@ -1617,6 +1621,23 @@ def _run() -> Path:
             "(--model is optional; the active server model is used when omitted.)\n"
             "(Or use --export [NAME] to recreate an archive from the repo.)"
         )
+
+    # An archive whose name (without extension) matches an existing branch has
+    # already been imported (or clashes with another release): refuse before
+    # doing anything else.  An explicit --branch still lets you add to a branch.
+    _src_path = args.src.expanduser().resolve()
+    if args.branch is None and is_archive(_src_path):
+        _derived = branch_name_from_archive(_src_path)
+        if branch_exists(args.git, _derived):
+            raise SystemExit(
+                f"Error: branch '{_derived}' already exists in {args.git} – "
+                f"refusing to import archive '{_src_path.name}' again.\n"
+                "Rename the archive, or pass --branch NAME to add it to an "
+                "existing branch on purpose.\n"
+                f"(If an earlier import of this archive failed before anything "
+                f"was committed, remove the leftover branch with "
+                f"'git branch -D {_derived}' and try again.)"
+            )
 
     args.model = resolve_model(args.url, args.model, args.api_key)
     author_name, author_email = parse_author(args.name)
