@@ -127,3 +127,13 @@ the list of bransches shoulfd only be printed when the user asks for it ("--list
 **Assistant:**
 
 Removed the automatic `git branch --all` output. New `--list` option (needs only `--git`, never creates the repo, cannot be combined with `--export`/`--src`) prints exactly the `git branch --all` output (`No branches found.` for an empty repo). After an import that created commits, only the name of the branch the commits went to is printed, as the very last line (after the temporary-directory cleanup message); dry-runs and "no changes" runs print nothing branch-related. Export prints no branch information (only its own `Exporting …` / `wrote …` lines, which were there before; say if you want those silenced too). Also factored the repo validation into `require_git_repo()`. Tested: import (zip and directory), dry-run, no-changes, export, `--list` (normal, missing path, non-repo, empty repo, with `--export`). README ("List mode", "Branch output") and `--help` updated.
+
+---
+
+**User:**
+
+if only "--git" is given, then "--list" is assumed.
+
+**Assistant:**
+
+When `--git` is the only option on the command line (every other option still at its argparse default, so `--git repo` and `--git=repo` both count), `--list` is now assumed. Any additional option (`--dry-run`, `--export`, `--strip`, …) keeps the previous behaviour, e.g. `--git repo --dry-run` still reports the missing import options. A missing/non-repo path still gives the usual error. Tested all of these; README and `--help` updated.
