@@ -124,7 +124,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 | `--url` | **yes** | no | OpenAI-compatible base URL, e.g. `http://localhost:8080/v1` |
 | `--model` | no | no | Model name (default: first/active model from `GET {url}/models`) |
 | `--src` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
-| `--name` | **yes** | no | Committer identity: `"Name <email@domain>"` |
+| `--name` | **yes** | no | Committer identity: `"Name <email@domain>"`; other forms are accepted too, see [Identity formats](#identity-formats) |
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
 | `--branch` | no | no | Branch to commit on (default: archive basename when `--src` is an archive) |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
@@ -312,6 +312,21 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 ### Bytecode caches
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
+
+### Identity formats
+
+`--name` is parsed leniently; the program never fails because of the format and prints a short note when it had to infer something:
+
+| Input | Author name | Author email |
+|---|---|---|
+| `Botter <ai@localhost>` | `Botter` | `ai@localhost` |
+| `xx@yyy.zz` or `<xx@yyy.zz>` | `xx` (part before the `@`) | `xx@yyy.zz` |
+| `Botter ai@localhost` (no brackets) | `Botter` | `ai@localhost` |
+| `Botter <ai@localhost` (missing `>`) | `Botter` | `ai@localhost` |
+| `Botter <not an email>` | `Botter` | `not.an.email@localhost` |
+| `Botter` | `Botter` | `botter@localhost` |
+
+Only an empty value is rejected. Characters Git does not allow in identities (`<`, `>`, line breaks) are removed.
 
 ### Branch listing
 
