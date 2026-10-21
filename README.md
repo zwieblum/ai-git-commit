@@ -313,6 +313,10 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
 
+### Existing branch check
+
+If `--src` is an archive and no `--branch` is given, the branch name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a local branch with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass `--branch NAME` explicitly if you really want to add the contents to an existing branch. If an earlier import of the archive failed before committing anything, delete the leftover branch (`git branch -D NAME`) and run again. Directory sources are not affected.
+
 ### Identity formats
 
 `--name` is parsed leniently; the program never fails because of the format and prints a short note when it had to infer something:
