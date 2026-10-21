@@ -1321,13 +1321,13 @@ def export_archive(
     output: Path | None = None,
     fmt: str = "zip",
     prefix: str | None = None,
-    strip: bool = False,
+    strip: bool = True,
 ) -> Path:
     """Recreate an archive from the tree at *branch* using ``git archive``.
 
-    By default all files are placed below a single top-level directory named
-    after the branch.  With ``strip=True`` that directory is omitted, so the
-    files sit directly at the root of the archive.
+    By default (``strip=True``) the files are stored directly at the root of
+    the archive.  With ``strip=False`` they are placed below a single top-level
+    directory named after the branch.
 
     Returns the path of the written archive.
     """
@@ -1353,7 +1353,7 @@ def export_archive(
             output = output / f"{branch}{ext}"
 
     # Prefix so unpacking creates a single top-level directory (matches import
-    # strip).  --strip drops it: files are stored at the archive root.
+    # strip).  strip (the default) drops it: files are stored at the archive root.
     if strip:
         prefix = ""
     elif prefix is None:
@@ -1417,8 +1417,8 @@ def main() -> None:
             "  %(prog)s --git ./repo --export 013-llm-errors.zip \\\n"
             "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
             "\n"
-            "  # Export without the top-level <branch>/ directory\n"
-            "  %(prog)s --git ./repo --export 013-llm-errors --strip\n"
+            "  # Export keeping the top-level <branch>/ directory\n"
+            "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
         ),
     )
     # --- always ---
@@ -1503,14 +1503,18 @@ def main() -> None:
     )
     export_opts.add_argument(
         "--strip",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="With --export: strip all directories from the archive, i.e. do "
-        "not wrap the files in a top-level <branch>/ directory",
+        "not wrap the files in a top-level <branch>/ directory (default: on). "
+        "Use --no-strip to keep the <branch>/ directory",
     )
     args = parser.parse_args()
 
-    if args.strip and args.export is None:
-        parser.error("--strip can only be used together with --export")
+    if args.strip is not None and args.export is None:
+        parser.error("--strip / --no-strip can only be used together with --export")
+    if args.strip is None:
+        args.strip = True  # default: files at the archive root
 
     # ----- export mode -----
     if args.export is not None:
