@@ -107,13 +107,14 @@ python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
 python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
   --export-format tar.gz --export-output /tmp/out.tar.gz
 
-# Without the top-level <branch>/ directory (files at the archive root)
-python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err --strip
+# Keep the top-level <branch>/ directory inside the archive
+python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err --no-strip
 ```
 
 The archive is written to the **current working directory** (not into the
-repository) unless `--export-output` is given. By default its content is
-wrapped in a single `<branch>/` directory; `--strip` removes that directory.
+repository) unless `--export-output` is given. By default (`--strip`) the files
+are stored directly at the archive root; `--no-strip` wraps them in a single
+`<branch>/` directory.
 
 ### Arguments
 
@@ -131,7 +132,7 @@ wrapped in a single `<branch>/` directory; `--strip` removes that directory.
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
-| `--strip` | no | no | With `--export`: strip all directories from the archive – no top-level `<branch>/` wrapper, files are stored at the archive root |
+| `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
 
@@ -312,6 +313,6 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
 
-### Export without wrapper directory
+### Export wrapper directory
 
-`--export … --strip` omits the `<branch>/` prefix so the archive contains the files directly at its root. It is only valid together with `--export`. Re-importing such an archive works as before (the importer only strips wrappers if there are any).
+By default `--export` omits the `<branch>/` prefix so the archive contains the files directly at its root (`--strip`, on by default). `--no-strip` restores the previous layout with a single `<branch>/` top-level directory. Both options are only valid together with `--export`. Re-importing either layout works (the importer only strips wrappers if there are any).
