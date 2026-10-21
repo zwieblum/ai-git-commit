@@ -97,3 +97,13 @@ when the program has finshed successfully, give a list of all branches like "git
 **Assistant:**
 
 After every successful run (import, dry-run, "no changes detected", export) the program now prints `git branch --all` output (`print_branches()`), under the heading "Branches (git branch --all):". The old `main()` body became `_run()`, which returns the repo path on each successful exit; `main()` prints the list afterwards. Runs that fail via `SystemExit`/exceptions don't print it. Tested against a mock OpenAI-compatible server: import, dry-run, identical re-import, export, and the error path. README updated.
+
+---
+
+**User:**
+
+when an email is not given in the form "NAME <xx qyyy>", then the program failes. make it handle emails gracefully, e.g. xx@yyy.zz
+
+**Assistant:**
+
+`parse_author()` used to raise `ValueError` (traceback) unless `--name` was exactly `Name <email>`. It is now lenient: `xx@yyy.zz` / `<xx@yyy.zz>` → name `xx`, email `xx@yyy.zz`; `Name xx@yyy.zz` (no brackets), `Name <xx@yyy.zz` (missing `>`), `Name <not an email>` (→ `not.an.email@localhost`) and a bare `Name` (→ `name@localhost`) also work. A one-line note shows how the value was interpreted; only an empty `--name` is an error (clean message, no traceback). Verified with a table of inputs and an end-to-end import with `--name xx@yyy.zz` (git author/committer = `xx <xx@yyy.zz>`). README ("Identity formats") and `--help` updated.
