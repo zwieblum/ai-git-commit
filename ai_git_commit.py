@@ -1381,7 +1381,8 @@ def export_archive(
     return output
 
 
-def main() -> None:
+def _run() -> Path:
+    """Run the program; returns the repository path on success."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
@@ -1540,7 +1541,7 @@ def main() -> None:
             fmt=args.export_format,
             strip=args.strip,
         )
-        return
+        return args.git
 
     ensure_git_repo(args.git)
 
@@ -1614,7 +1615,7 @@ def main() -> None:
         changes = collect_changes(args.git)
         if not changes:
             print("No changes detected. Nothing to commit.")
-            return
+            return args.git
 
         print(f"Found {len(changes)} changed path(s):")
         for c in changes:
@@ -1632,7 +1633,7 @@ def main() -> None:
 
         if not plans:
             print("Model returned empty plan.")
-            return
+            return args.git
 
         print(f"\nPlanned {len(plans)} commit(s):")
         for i, p in enumerate(plans, 1):
@@ -1651,10 +1652,25 @@ def main() -> None:
 
         if args.dry_run:
             print("\nDry-run finished. No commits were created.")
-            return
+            return args.git
 
         apply_commits(args.git, plans, author_name, author_email)
         print("\nDone.")
+    return args.git
+
+
+def print_branches(repo: Path) -> None:
+    """Print all branches like ``git branch --all`` (called after success)."""
+    r = run_git(repo, "branch", "--all", "--no-color", check=False)
+    if r.returncode != 0 or not r.stdout.strip():
+        return
+    print("\nBranches (git branch --all):")
+    print(r.stdout.rstrip("\n"))
+
+
+def main() -> None:
+    repo = _run()  # errors exit via SystemExit and never reach the listing
+    print_branches(repo)
 
 
 if __name__ == "__main__":
