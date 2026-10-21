@@ -106,7 +106,14 @@ python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
 # Format and output path
 python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
   --export-format tar.gz --export-output /tmp/out.tar.gz
+
+# Without the top-level <branch>/ directory (files at the archive root)
+python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err --strip
 ```
+
+The archive is written to the **current working directory** (not into the
+repository) unless `--export-output` is given. By default its content is
+wrapped in a single `<branch>/` directory; `--strip` removes that directory.
 
 ### Arguments
 
@@ -123,7 +130,8 @@ python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
 | `--dry-run` | no | no | Plan commits only; do not write |
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
-| `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory) |
+| `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
+| `--strip` | no | no | With `--export`: strip all directories from the archive – no top-level `<branch>/` wrapper, files are stored at the archive root |
 
 ### Example – rebuild history from old archives
 
@@ -303,3 +311,7 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 ### Bytecode caches
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
+
+### Export without wrapper directory
+
+`--export … --strip` omits the `<branch>/` prefix so the archive contains the files directly at its root. It is only valid together with `--export`. Re-importing such an archive works as before (the importer only strips wrappers if there are any).
