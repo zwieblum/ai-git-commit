@@ -1503,6 +1503,7 @@ def main() -> None:
             "\n"
             "  # List all branches (like 'git branch --all'); needs only --git\n"
             "  %(prog)s --git ./repo --list\n"
+            "  %(prog)s --git ./repo          # same: --list is assumed\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
             "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
@@ -1565,14 +1566,14 @@ def main() -> None:
     )
     # --- export mode ---
     list_opts = parser.add_argument_group(
-        "list mode (needs only --git)"
+        "list mode (needs only --git; assumed when --git is the only option)"
     )
     list_opts.add_argument(
         "--list",
         action="store_true",
         help="Print all branches of the repository like 'git branch --all' "
-        "and exit (nothing else is printed; no branch listing is shown after "
-        "an import or export)",
+        "and exit.  Implied when --git is the only option given.  (No branch "
+        "listing is shown after an import or export.)",
     )
     export_opts = parser.add_argument_group(
         "export mode (does not need --url / --model / --src / --name)"
@@ -1609,6 +1610,14 @@ def main() -> None:
         "Use --no-strip to keep the <branch>/ directory",
     )
     args = parser.parse_args()
+
+    # Only --git given (every other option still at its default) → --list
+    if not args.list and all(
+        getattr(args, dest) == parser.get_default(dest)
+        for dest in vars(args)
+        if dest != "git"
+    ):
+        args.list = True
 
     if args.strip is not None and args.export is None:
         parser.error("--strip / --no-strip can only be used together with --export")
