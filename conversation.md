@@ -61,3 +61,29 @@ Removed `__pycache__` from the project and added a `.gitignore` (`__pycache__/`,
 Cause of the first problem: `export_archive()` passed a relative `--output` to `git -C <repo> archive`, which resolves relative paths against the repository, so the default `<branch>.zip` was written inside the repo. The default (and any relative path) is now resolved against the current working directory, so the archive is created there, not in the repository.
 
 Added `--strip` (export mode only; error if used without `--export`). It omits the top-level `<branch>/` directory, so the archive holds the files directly at its root (works for zip, tar, tar.gz/tgz). I read "trailing directories" as the wrapper directory around the files (the leading path component). Without `--strip` the behaviour is unchanged (`<branch>/…`). Tested with zip, tar and tar.gz, with and without `--strip`, with `--export-output` pointing at a directory, and the `--strip`-without-`--export` error; tqdm was stubbed in the sandbox. README and `--help` epilog updated.
+
+---
+
+**User:**
+
+make "--strip" the default, add "--no-strip"
+
+**Assistant:**
+
+`--strip` is now the default for `--export`: the archive holds the files directly at its root. Added `--no-strip` to get the previous layout with a single top-level `<branch>/` directory. Implemented as a `--strip/--no-strip` pair (`argparse.BooleanOptionalAction`, default unset → strip on); either flag is still rejected without `--export`. `export_archive(strip=…)` now defaults to `True`. Tested zip and tar.gz with no flag, `--strip` and `--no-strip`, plus the error case. README and `--help` examples updated. (Side finding in the previous round: output paths are resolved against the cwd, fixed in 021.)
+
+---
+
+**User:**
+
+using llama-server, what settings would be the best settings for model "qwen2.5-coder-7b-instruct-q4_k_m" on a RTX4060 (8GB) ?
+
+**Assistant:** Suggested `-ngl 99 -c 32768 -np 1 -fa on -ctk q8_0 -ctv q8_0 -b 2048 -ub 512 --jinja` with Qwen's recommended sampling (temp 0.7, top-k 20, top-p 0.8, repeat penalty 1.05).
+
+---
+
+**User:**
+
+can these settings live inside a "model.ini"?
+
+**Assistant:** Yes, via `llama-server --models-preset model.ini --models-max 1` (router mode): one section per model, section name = model id, keys = long CLI flags without dashes, absolute paths only, `[*]` for shared defaults, restart to reload.
