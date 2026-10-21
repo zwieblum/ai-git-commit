@@ -116,6 +116,16 @@ repository) unless `--export-output` is given. By default (`--strip`) the files
 are stored directly at the archive root; `--no-strip` wraps them in a single
 `<branch>/` directory.
 
+### List mode
+
+Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits:
+
+```bash
+python ai_git_commit.py --git /path/to/repo --list
+```
+
+`--list` cannot be combined with `--export` or `--src`, and it never creates the repository.
+
 ### Arguments
 
 | Flag | Import | Export | Description |
@@ -132,6 +142,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
+| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git` |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
@@ -332,9 +343,14 @@ If `--src` is an archive and no `--branch` is given, the branch name is derived 
 
 Only an empty value is rejected. Characters Git does not allow in identities (`<`, `>`, line breaks) are removed.
 
-### Branch listing
+### Branch output
 
-When a run finishes successfully (import, dry-run, "no changes", or export) the program ends by printing all branches of the repository, exactly like `git branch --all` (current branch marked with `*`). Runs that abort with an error do not print the list.
+Nothing about branches is printed by default, with two exceptions:
+
+* **After an import that created commits** the program prints just the name of the branch the commits went to (the last line of output, e.g. `013-llm-errors`). Nothing is printed for dry-runs and "no changes" runs.
+* **After an export** nothing branch-related is printed (only the `wrote …` line of the export itself).
+
+To see all branches use `--list` (see *List mode*).
 
 ### Export wrapper directory
 
