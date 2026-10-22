@@ -288,3 +288,13 @@ use only the differences in "conversation.md" as the source of the description.
 **Assistant:**
 
 `summarize_progress()` now sends the model nothing but `git diff -U0 <previous tip> HEAD -- <doc>` (for a first import: against the empty tree, i.e. the whole document as additions). The commit messages, the changed-file stat and the "full text if unchanged" fallback are gone; the prompt says to use only these changes. If the document did not change, no tag is created and a note says so (`--describe TEXT` still works). Applies to whichever description document was found (conversation.* first, then README… etc.). README updated. Tested: prompt content for v2 (only the added conversation lines), first import, unchanged document, README fallback.
+
+---
+
+**User:**
+
+changes in conversation.md should not be mentioned in the short description.
+
+**Assistant:**
+
+The prompt now says the document is only the source of information about what changed in the project: describe those changes, never mention the document, a conversation, requests, users/assistants or "log updated". Safety net: if the result still mentions the document's file name (or "conversation" for conversation.*), the model is asked once more with a reminder; remaining sentences that mention it are dropped. If nothing is left, no tag is created (note printed; `--describe` still works). Tested the filter on sample texts and an import with a mock model that mentions the file on the first attempt.
