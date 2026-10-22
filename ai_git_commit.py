@@ -204,6 +204,121 @@ def current_branch(repo: Path) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+TAG_PREFIX = "desc/"
+# Documents that describe a release, in priority order (file stem, any extension).
+DESCRIPTION_DOC_STEMS = ("conversation", "readme", "changelog", "changes", "history", "notes")
+MAX_DESCRIPTION_WORDS = 120
+MAX_PROMPT_CHARS = 12000
+
+
+def description_tag_name(branch: str) -> str:
+    """Name of the annotated tag that carries the description of *branch*."""
+    return f"{TAG_PREFIX}{branch}"
+
+
+def find_description_doc(repo: Path, ref: str = "HEAD") -> str | None:
+    """Return the best description document in the root of *ref*, or None.
+
+    Priority: conversation.* first, then README*, CHANGELOG*, CHANGES*,
+    HISTORY*, NOTES* (case-insensitive, any extension).
+    """
+    r = run_git(repo, "ls-tree", "--name-only", ref, check=False)
+    if r.returncode != 0:
+        return None
+    names = sorted(n for n in r.stdout.splitlines() if "/" not in n)
+    for stem in DESCRIPTION_DOC_STEMS:
+        for n in names:
+            if Path(n).stem.lower() == stem and (repo / n).is_file():
+                return n
+    return None
+
+
+def _clip(text: str, limit: int = MAX_PROMPT_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit] + "\n[… truncated …]"
+
+
+def summarize_progress(
+    repo: Path, doc: str, start_head: str | None,
+    base_url: str, model: str, api_key: str | None,
+) -> str:
+    """Ask the model for a short summary of what changed since *start_head*.
+
+    Primary source is the diff of the description document between the
+    previous version (*start_head*) and the current tip; if the document is new
+    or unchanged, its full text and the commit messages are used instead.
+    """
+    cur = read_head_file(repo, doc).decode("utf-8", "replace")
+    prev = read_head_file_at(repo, start_head, doc) if start_head else b""
+    parts: list[str] = []
+    if prev and prev.decode("utf-8", "replace") != cur:
+        d = _git_bytes(repo, "diff", "--no-color", "-U2", start_head, "HEAD", "--", doc)
+        parts.append(f"CHANGES OF {doc} SINCE THE PREVIOUS VERSION (unified diff):\n"
+                     + _clip(d.stdout.decode("utf-8", "replace")))
+    else:
+        parts.append(f"CONTENT OF {doc} (current version):\n" + _clip(cur))
+    if start_head:
+        log = run_git(repo, "log", "--format=- %s", f"{start_head}..HEAD", check=False).stdout
+        stat = run_git(repo, "diff", "--stat", start_head, "HEAD", check=False).stdout
+    else:
+        log = run_git(repo, "log", "--format=- %s", check=False).stdout
+        stat = ""
+    if log.strip():
+        parts.append("COMMIT MESSAGES OF THIS VERSION:\n" + _clip(log, 4000))
+    if stat.strip():
+        parts.append("FILES CHANGED:\n" + _clip(stat, 3000))
+    system = (
+        "You write the description of a new version of a software project, to be "
+        "stored as the message of an annotated Git tag. Summarize the differences / "
+        "progression from the previous version to the current version, based mainly "
+        f"on the document provided. Output PLAIN TEXT only: one subject line (<=72 "
+        "characters), a blank line, then a short body of what changed. No markdown "
+        f"headings, no code fences, at most {MAX_DESCRIPTION_WORDS} words in total."
+    )
+    raw = call_llm(base_url, model, system, "\n\n".join(parts), api_key, max_tokens=1024)
+    return normalize_description(raw)
+
+
+def read_head_file_at(repo: Path, ref: str, path: str) -> bytes:
+    r = _git_bytes(repo, "show", f"{ref}:{path}")
+    return r.stdout if r.returncode == 0 else b""
+
+
+def normalize_description(text: str) -> str:
+    """Strip code fences, trim, and cut to MAX_DESCRIPTION_WORDS words."""
+    text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip())
+    out: list[str] = []
+    used = 0
+    for line in text.splitlines():
+        n = len(line.split())
+        if used + n <= MAX_DESCRIPTION_WORDS:
+            out.append(line.rstrip())
+            used += n
+        else:
+            room = MAX_DESCRIPTION_WORDS - used
+            if room > 0 and line.strip():
+                out.append(" ".join(line.split()[:room]))
+            break
+    return "\n".join(out).strip()
+
+
+def tag_branch_description(
+    repo: Path, branch: str, description: str, author_name: str, author_email: str,
+) -> None:
+    """Create (or replace) the annotated tag ``desc/<branch>`` on the branch tip."""
+    env = os.environ.copy()
+    env.update(GIT_COMMITTER_NAME=author_name, GIT_COMMITTER_EMAIL=author_email,
+               GIT_AUTHOR_NAME=author_name, GIT_AUTHOR_EMAIL=author_email)
+    tag = description_tag_name(branch)
+    r = subprocess.run(
+        ["git", "-C", str(repo), "tag", "-a", "-f", "-F", "-", tag, f"refs/heads/{branch}"],
+        input=description + "\n", text=True, capture_output=True, env=env,
+    )
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip())
+    first = description.splitlines()[0] if description else ""
+    print(f"Tagged branch tip as '{tag}': {first}")
+
+
 def _repo_size_kib(repo: Path) -> int:
     """Size of the object database (loose + packed) in KiB."""
     info = {}
@@ -279,6 +394,11 @@ def revert_last_branch(repo: Path) -> None:
 
     print(f"Removed branch '{last}' (was {sha[:12]}); now on '{now_on}'.")
     print(f"Restore with: git -C {repo} branch {last} {sha}")
+    tag = description_tag_name(last)
+    if run_git(repo, "rev-parse", "-q", "--verify", f"refs/tags/{tag}", check=False).returncode == 0:
+        # a leftover tag would keep the removed commits reachable
+        run_git(repo, "tag", "-d", tag, check=False)
+        print(f"Removed its description tag '{tag}'.")
 
 
 def ensure_git_repo(repo: Path) -> None:
@@ -1750,6 +1870,15 @@ def main() -> None:
         help="Append the archive filename to each commit message (default: off)",
     )
     import_opts.add_argument(
+        "--describe",
+        default=None,
+        metavar="TEXT",
+        help="Description stored as annotated tag 'desc/<branch>' on the branch "
+        "tip after an import.  Overrides the automatic summary, which is made "
+        "by the model from conversation.md (or README…, CHANGELOG…) when such "
+        "a file is present in the repository",
+    )
+    import_opts.add_argument(
         "--dry-run",
         action="store_true",
         help="Plan commits only; do not sync or write commits",
@@ -1841,7 +1970,7 @@ def main() -> None:
             for flag, dest in (
                 ("--url", "url"), ("--model", "model"), ("--name", "name"),
                 ("--branch", "branch"), ("--mention-archive", "mention_archive"),
-                ("--dry-run", "dry_run"),
+                ("--describe", "describe"), ("--dry-run", "dry_run"),
             )
             if getattr(args, dest) != parser.get_default(dest)
         ]
@@ -2031,9 +2160,35 @@ def main() -> None:
                 print("\nDry-run finished. No commits were created.")
                 return
 
+            start_head = (
+                run_git(args.repo, "rev-parse", "HEAD").stdout.strip()
+                if has_commits(args.repo) else None
+            )
             apply_commits(args.repo, plans, author_name, author_email)
             print("\nDone.")
             committed = True
+
+            # Description of this version as annotated tag on the branch tip.
+            # Failures here never undo the (already finished) commits.
+            tip_branch = current_branch(args.repo)
+            try:
+                description = (args.describe or "").strip()
+                if not description:
+                    doc = find_description_doc(args.repo)
+                    if doc:
+                        print(f"Summarizing the progress from '{doc}' for the branch description …")
+                        description = summarize_progress(
+                            args.repo, doc, start_head, args.url, args.model, args.api_key
+                        )
+                    else:
+                        print("No conversation.md / README found – no branch description tag "
+                              "(use --describe TEXT to set one).")
+                if description and tip_branch and tip_branch != "HEAD":
+                    tag_branch_description(
+                        args.repo, tip_branch, description, author_name, author_email
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"warning: branch description tag not created: {exc}", file=sys.stderr)
     finally:
         # A branch created for this import must not survive without commits
         # (failure and rollback, dry-run, "no changes", empty plan).
