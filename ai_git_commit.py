@@ -1221,10 +1221,11 @@ def plan_commits(
             if not isinstance(item, dict):
                 continue
             msg = str(item.get("message", "")).strip()
-            idxs = item.get("hunks") or item.get("files") or []
-            if not msg or not isinstance(idxs, list):
+            raw_idx = item.get("hunk", item.get("hunks"))
+            idxs = raw_idx if isinstance(raw_idx, list) else [raw_idx]
+            if not msg:
                 continue
-            clean_idx = []
+            clean_idx: list[int] = []
             for x in idxs:
                 try:
                     xi = int(x)
