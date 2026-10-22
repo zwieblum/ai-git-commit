@@ -17,11 +17,11 @@ and chronologically ordered by the original file modification times.
 | **Source flexibility** | `--add` can be a plain directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, …). |
 | **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. Optionally (`--mention-archive`) the archive filename can be included in every commit message (off by default). |
 | **Extra-layer guard** | If a plain directory nests content one or more levels deeper than the repository root (and names overlap), the program **warns and stops**. |
-| **Auto-init** | If `--git` does not exist or is not yet a repository, the directory is created and `git init` is run. |
+| **Auto-init** | If `--repo` does not exist or is not yet a repository, the directory is created and `git init` is run. |
 | **LLM commit messages** | An OpenAI-compatible `/v1/chat/completions` endpoint produces a JSON plan of functionally coherent commits. |
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
-| **Progress feedback** | Progress bars (via `tqdm`) for file copy (fallback path) and for the commit-creation loop; `rsync --info=progress2` when rsync is used. |
+| **Output** | Plain text output, no progress bars. |
 | **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
 | **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: branch with the newest commit). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
@@ -35,7 +35,7 @@ and chronologically ordered by the original file modification times.
 
 - **Python** 3.9 or newer
 - **git** on `$PATH`
-- **rsync** (recommended; a pure-Python fallback with progress bar is used if missing)
+- **rsync** (recommended; a pure-Python fallback is used if missing)
 
 ### Python packages
 
@@ -46,7 +46,6 @@ pip install -r requirements.txt
 | Package   | Purpose                          |
 |-----------|----------------------------------|
 | `requests`| HTTP client for the LLM API      |
-| `tqdm`    | Progress bars                    |
 
 No other third-party libraries are required (standard library covers `zipfile`,
 `tarfile`, `argparse`, `pathlib`, etc.).
@@ -80,11 +79,11 @@ chmod +x ai_git_commit.py   # optional
 
 ### Import mode
 
-Requires `--git`, `--url`, `--add`, and `--name`. `--model` is optional (defaults to the first/active model from `GET {url}/models`).
+Requires `--url`, `--add`, and `--name` (`--repo` defaults to `./repository`). `--model` is optional (defaults to the first/active model from `GET {url}/models`).
 
 ```bash
 python ai_git_commit.py \
-  --git  /path/to/the/repository \
+  --repo  /path/to/the/repository \
   --url  http://localhost:8080/v1 \
   --model qwen2.5-coder \
   --add  /path/to/the/new/content_or_archive.zip \
@@ -93,22 +92,22 @@ python ai_git_commit.py \
 
 ### Export mode
 
-Requires only `--git` and `--export`. **Does not** need `--url`, `--model`, `--add`, or `--name`.
+Requires only `--export` (and `--repo`, default `./repository`). **Does not** need `--url`, `--model`, `--add`, or `--name`.
 
 ```bash
 # Last archive (branch with the newest commit)
-python ai_git_commit.py --git /path/to/repo --export
+python ai_git_commit.py --repo /path/to/repo --export
 
 # Specific branch or archive name
-python ai_git_commit.py --git /path/to/repo --export 013-llm-errors
-python ai_git_commit.py --git /path/to/repo --export 013-llm-errors.zip
+python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors
+python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors.zip
 
 # Format and output path
-python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err \
+python ai_git_commit.py --repo /path/to/repo --export 014-clean-llm-err \
   --export-format tar.gz --export-output /tmp/out.tar.gz
 
 # Keep the top-level <branch>/ directory inside the archive
-python ai_git_commit.py --git /path/to/repo --export 014-clean-llm-err --no-strip
+python ai_git_commit.py --repo /path/to/repo --export 014-clean-llm-err --no-strip
 ```
 
 The archive is written to the **current working directory** (not into the
@@ -118,11 +117,11 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
-python ai_git_commit.py --git /path/to/repo --list
-python ai_git_commit.py --git /path/to/repo          # same thing
+python ai_git_commit.py --repo /path/to/repo --list
+python ai_git_commit.py --repo /path/to/repo          # same thing
 ```
 
 Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignored in list mode; a note on stderr says so.
@@ -131,10 +130,10 @@ Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignor
 
 ### Revert mode
 
-Requires only `--git`. Removes the **last branch** – the one holding the most recent import – from the repository, e.g. to undo a bad import:
+Requires no other option (`--repo` defaults to `./repository`). Removes the **last branch** – the one holding the most recent import – from the repository, e.g. to undo a bad import:
 
 ```bash
-python ai_git_commit.py --git /path/to/repo --revert
+python ai_git_commit.py --repo /path/to/repo --revert
 ```
 
 * "Last" is the branch with the highest leading number (`013-llm-errors` beats `012-…`); without numbered branches the branch whose tip is newest is used.
@@ -147,7 +146,7 @@ python ai_git_commit.py --git /path/to/repo --revert
 
 | Flag | Import | Export | Description |
 |------|:------:|:------:|-------------|
-| `--git` | **yes** | **yes** | Path to the local Git repository (created on import if missing) |
+| `--repo` | no | no | Path to the local Git repository (created on import if missing). Default: `./repository` (the former name `--git` is no longer accepted) |
 | `--url` | **yes** | no | OpenAI-compatible base URL, e.g. `http://localhost:8080/v1` |
 | `--model` | no | no | Model name (default: first/active model from `GET {url}/models`) |
 | `--add` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
@@ -159,19 +158,19 @@ python ai_git_commit.py --git /path/to/repo --revert
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
-| `--revert` | no | no | Revert mode: remove the last branch from the repository (needs only `--git`; not combinable with `--add` / `--export` / `--list`) |
-| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git`; this is the default when neither `--add` nor `--export` is given |
+| `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
+| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs no other option; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
 
 ```bash
 # oldest snapshot first
-python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2020.zip \
+python ai_git_commit.py --url … --model … --repo ./proj --add snapshot-2020.zip \
   --name "Botter <bot@localhost>"
-python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2021.tar.gz \
+python ai_git_commit.py --url … --model … --repo ./proj --add snapshot-2021.tar.gz \
   --name "Botter <bot@localhost>"
-python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2022/ \
+python ai_git_commit.py --url … --model … --repo ./proj --add snapshot-2022/ \
   --name "Botter <bot@localhost>"
 ```
 
@@ -192,7 +191,7 @@ resulting Git history is chronologically ordered.
                                                       │
                                                       ▼
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  --git      │────▶│ ensure_git_repo  │────▶│ working tree    │
+│  --repo      │────▶│ ensure_git_repo  │────▶│ working tree    │
 │ (path)      │     │ (init if needed) │     │                 │
 └─────────────┘     └──────────────────┘     └────────┬────────┘
                                                       │
@@ -200,7 +199,7 @@ resulting Git history is chronologically ordered.
                       (abort if nested wrapper)       │
                                                       ▼
                                              sync_source_to_repo()
-                                             (rsync or copy+progress)
+                                             (rsync or copy)
                                                       │
                                                       ▼
                                              collect_changes()
@@ -213,7 +212,7 @@ resulting Git history is chronologically ordered.
                                                       ▼
                                              apply_commits()
                                              (stage, date from mtime,
-                                              commit with progress)
+                                              commit)
 ```
 
 ### 1. Source resolution (`resolve_source`)
@@ -239,9 +238,9 @@ prevents accidentally nesting the whole project under an extra folder.
 
 ### 4. Sync
 
-- Prefer `rsync -a --delete --exclude .git --info=progress2`.
-- Fallback: pure-Python walk + `shutil.copy2` (preserves mtimes) with a
-  `tqdm` progress bar, then removal of obsolete files (also with progress).
+- Prefer `rsync -a --delete --exclude .git`.
+- Fallback: pure-Python walk + `shutil.copy2` (preserves mtimes), then
+  removal of obsolete files.
 
 ### 5. Change collection
 
@@ -316,7 +315,6 @@ For each planned commit:
 4. Set author/committer name and email from `--name`.
 5. `git commit -m …`.
 
-A `tqdm` progress bar tracks overall commit creation.
 
 ---
 
@@ -340,8 +338,7 @@ ai_git_commit.py
 ```
 
 All Git interaction goes through the `git` CLI (`subprocess`); no GitPython
-dependency. HTTP is handled solely by `requests`. Progress UI is provided by
-`tqdm` (and by rsync itself when available).
+dependency. HTTP is handled solely by `requests`.
 
 ---
 

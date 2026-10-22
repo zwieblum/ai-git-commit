@@ -188,3 +188,13 @@ A branch created for the import should be deleted after a rollback
 **Assistant:**
 
 `ensure_branch()` now returns whether it created the branch. If the run ends without a commit, the new branch is deleted (`discard_created_branch()`): previous branch checked out again (`-f` after a real sync), synced untracked files removed (`git clean`, only after a real sync), `git branch -D`. This covers the rollback after a failed commit and also any other error before committing, `--dry-run` and "no changes" (they used to leave the branch behind). Existing branches (`--branch NAME`) are never deleted; successful imports are untouched. Tested with a mock model and a commit-msg hook rejecting the 4th commit of 6: 3 commits reverted, branch `002-b` deleted, back on `001-a`, clean tree; retry without hook succeeded; dry-run on a new branch left no branch. README updated.
+
+---
+
+**User:**
+
+remove the progress bar; rename "--git" to "--repo"; when no repository is given, assume "repository" as the name
+
+**Assistant:**
+
+Progress bars are gone: `tqdm` import, all bars and `tqdm.write` (now plain `print`) removed, `tqdm` dropped from `requirements.txt`, and rsync no longer gets `--info=progress2`. `--git` was renamed to `--repo` everywhere (option, `args.repo`, help, README); the old name is rejected. `--repo` is no longer required: without it `./repository` is used (so `ai_git_commit.py --list` lists `./repository`, an import creates it). Tested with a mock model: import into the default `repository`, `--repo` explicit, `--git` rejected, list/revert/export with the default.
