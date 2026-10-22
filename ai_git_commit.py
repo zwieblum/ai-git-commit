@@ -1162,45 +1162,44 @@ def plan_commits(
         if leftover:
             plans.append(CommitPlan(message="chore: remaining small changes", files=leftover))
 
-    # ---- 2) Large files: ask the model to split into functional hunks ----
+    # ---- 2) Large files: the model only PLANS the split, the program does it ----
+    # The model returns the order of the hunks and one commit message per hunk.
+    # apply_commits() then takes the file from the repository, applies exactly
+    # one hunk, commits, and repeats until every hunk is done.
     for c in large:
-        print(f"  Large file {c.path} ({c.total_lines} lines) – asking model to plan functional hunks …")
-        diff_text = _get_file_diff(repo, c.path)
-        hunks = _parse_unified_hunks(diff_text)
-        if not hunks:
-            # fallback: treat whole file as one commit
+        print(f"  Large file {c.path} ({c.total_lines} lines) – asking model to plan the hunk split …")
+        hunks = _parse_unified_hunks(_get_file_diff(repo, c.path))
+        if len(hunks) < 2 or not verify_hunks(repo, c.path, hunks):
+            if len(hunks) >= 2:
+                print(f"  warning: hunks of {c.path} do not reproduce the file – committing it as a whole")
             plans.append(CommitPlan(message=f"update {c.path}", files=[c.path]))
             continue
 
-        # Build a readable hunk summary for the model (truncate very long bodies)
         hunk_summaries = []
         for h in hunks:
-            preview = h.body.strip().splitlines()
-            preview = preview[:8]  # first few lines
-            preview_txt = "\n".join(preview)
-            if len(h.body.splitlines()) > 8:
+            body_lines = h.body.rstrip("\n").splitlines()
+            preview_txt = "\n".join(body_lines[:40])
+            if len(body_lines) > 40:
                 preview_txt += "\n…"
-            hunk_summaries.append(
-                f"HUNK {h.index}  ({h.change_lines} changed lines)\n{h.header}\n{preview_txt}"
-            )
+            hunk_summaries.append(f"HUNK {h.index}  ({h.change_lines} changed lines)\n{preview_txt}")
         hunk_block = "\n\n".join(hunk_summaries)
 
         system = (
-            "You are an expert software engineer. A single large file has many changes. "
-            "Split them into functionally coherent commits.\n"
+            "You are an expert software engineer. A single large file has many changes, "
+            "shown as numbered diff hunks. A program (not you) will split the file: it takes "
+            "the file from the repository, applies exactly ONE hunk, commits it, and repeats. "
+            "You only write the plan: the order in which the hunks are applied and a commit "
+            "message for each hunk.\n"
             "Rules:\n"
-            f"- Each commit should preferably contain at most {MAX_LINES_PER_COMMIT} changed lines "
-            "(sum of the hunk change_lines you assign to it).\n"
-            "- Group consecutive or related hunks that implement the same logical change.\n"
-            "- Hunks must be applied in ascending index order; do not reorder them across commits "
-            "in a way that would break sequential application (each commit's hunk indices must be "
-            "increasing, and commits themselves ordered by the smallest hunk index they contain).\n"
-            "- Every hunk index from 0 to N-1 must appear in exactly one commit.\n"
+            "- Every hunk index from 0 to N-1 must appear exactly once.\n"
+            "- Order the hunks so that each commit makes sense on its own and earlier commits "
+            "do not depend on later ones; hunks of the same logical change should be adjacent.\n"
+            "- Hunks may be applied in any order; the program handles shifted line numbers.\n"
             "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
             f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
             f"{archive_note}"
-            "- Output ONLY valid JSON: a list of objects with keys:\n"
-            '  "message" (string), "hunks" (list of integer hunk indices).\n'
+            "- Output ONLY valid JSON: a list of objects, one per hunk, with keys:\n"
+            '  "hunk" (integer hunk index), "message" (string).\n'
             "- Do not invent hunk indices."
         )
         user = (
