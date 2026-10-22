@@ -866,50 +866,99 @@ def check_model(base_url: str, model: str, api_key: str | None = None) -> None:
     print(f"  model OK" + (f" (reply: {shown!r})" if shown else " (empty reply)"))
 
 
-def _parse_unified_hunks(diff_text: str) -> list[DiffHunk]:
-    """Parse a unified diff (possibly multi-file) into per-hunk objects.
+class HunkError(RuntimeError):
+    """A hunk could not be applied to the file taken from the repository."""
 
-    Only the hunk bodies are kept; file headers are ignored here (caller
-    already knows the path).
+
+_HUNK_RE = re.compile(rb"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _split_lines(data: bytes) -> list[bytes]:
+    """Split on b'\\n' only (like git does), keeping the line endings."""
+    return re.findall(rb"[^\n]*\n|[^\n]+", data)
+
+
+def _parse_unified_hunks(diff: bytes) -> list[DiffHunk]:
+    """Parse the unified diff of ONE file into per-hunk objects.
+
+    Hunk extents are taken from the ``@@ -a,b +c,d @@`` counts, so lines in a
+    hunk body that merely look like headers cannot confuse the parser.
     """
+    lines = _split_lines(diff)
     hunks: list[DiffHunk] = []
-    lines = diff_text.splitlines(keepends=True)
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("@@"):
-            header = line.rstrip("\n")
-            body_lines = [line]
+    i, n = 0, len(lines)
+    while i < n:
+        m = _HUNK_RE.match(lines[i])
+        if not m:
             i += 1
-            while i < len(lines) and not lines[i].startswith("@@") and not lines[i].startswith("diff --git"):
-                body_lines.append(lines[i])
-                i += 1
-            body = "".join(body_lines)
-            # count +/- lines (ignore @@ and context ' ')
-            change = sum(
-                1
-                for bl in body_lines
-                if bl.startswith("+") or bl.startswith("-")
-            ) - sum(1 for bl in body_lines if bl.startswith("+++") or bl.startswith("---"))
-            # simpler approximate: every + or - that is not a file header
-            change = 0
-            for bl in body_lines[1:]:
-                if bl.startswith("+") or bl.startswith("-"):
-                    change += 1
-            hunks.append(
-                DiffHunk(
-                    index=len(hunks),
-                    header=header,
-                    body=body,
-                    change_lines=change,
-                )
-            )
             continue
+        old_start = int(m.group(1))
+        old_count = int(m.group(2)) if m.group(2) is not None else 1
+        new_count = int(m.group(4)) if m.group(4) is not None else 1
+        header = lines[i].rstrip(b"\n").decode("utf-8", "replace")
+        body = [lines[i]]
+        old_l: list[bytes] = []
+        new_l: list[bytes] = []
+        change = 0
+        old_seen = new_seen = 0
+        prev = b""
         i += 1
+        while i < n:
+            ln = lines[i]
+            tag = ln[:1]
+            if tag == b"\\":  # "\ No newline at end of file" → previous line has none
+                if prev == b" ":
+                    old_l[-1] = old_l[-1].rstrip(b"\n")
+                    new_l[-1] = new_l[-1].rstrip(b"\n")
+                elif prev == b"-":
+                    old_l[-1] = old_l[-1].rstrip(b"\n")
+                elif prev == b"+":
+                    new_l[-1] = new_l[-1].rstrip(b"\n")
+                body.append(ln)
+                i += 1
+                continue
+            if old_seen >= old_count and new_seen >= new_count:
+                break
+            if tag == b" ":
+                old_l.append(ln[1:]); new_l.append(ln[1:])
+                old_seen += 1; new_seen += 1
+            elif tag == b"-":
+                old_l.append(ln[1:]); old_seen += 1; change += 1
+            elif tag == b"+":
+                new_l.append(ln[1:]); new_seen += 1; change += 1
+            else:
+                break
+            prev = tag
+            body.append(ln)
+            i += 1
+        hunks.append(
+            DiffHunk(
+                index=len(hunks),
+                header=header,
+                body=b"".join(body).decode("utf-8", "replace"),
+                change_lines=change,
+                old_start=old_start,
+                old_count=old_count,
+                old_lines=old_l,
+                new_lines=new_l,
+            )
+        )
     return hunks
 
 
-def _get_file_diff(repo: Path, path: str) -> str:
+def _git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+
+
+def read_head_file(repo: Path, path: str) -> bytes:
+    """Return *path* as stored in HEAD (b'' if there is no HEAD or no such file)."""
+    if not has_commits(repo):
+        return b""
+    r = _git_bytes(repo, "show", f"HEAD:{path}")
+    return r.stdout if r.returncode == 0 else b""
+
+
+def _get_file_diff(repo: Path, path: str) -> bytes:
     """Return the unified diff of *path* against HEAD (or the whole file if new).
 
     Untracked files are not shown by ``git diff HEAD -- path``, so we detect
