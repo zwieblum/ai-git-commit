@@ -46,13 +46,26 @@ import requests
 MAX_LINES_PER_COMMIT = 200
 # Never sync or commit Python bytecode caches.
 IGNORED_DIR_NAMES = ("__pycache__",)
-IGNORED_FILE_SUFFIXES = (".pyc", ".pyo")
+# Bytecode caches and common editor/backup files – never synced or committed.
+IGNORED_FILE_SUFFIXES = (
+    ".pyc", ".pyo",
+    ".bak", ".BAK", ".orig", ".swp", ".swo", ".tmp",
+)
 
 
 def is_ignored_path(path: str) -> bool:
-    """True for bytecode-cache paths that must never be added to the repo."""
-    parts = Path(path).parts
-    return any(d in parts for d in IGNORED_DIR_NAMES) or path.endswith(IGNORED_FILE_SUFFIXES)
+    """True for paths that must never be added to the repo (bytecode, backups)."""
+    p = Path(path)
+    parts = p.parts
+    name = p.name
+    if any(d in parts for d in IGNORED_DIR_NAMES):
+        return True
+    if name.endswith(IGNORED_FILE_SUFFIXES) or name.endswith("~"):
+        return True
+    # Emacs-style auto-save / lock files: #file#
+    if len(name) >= 2 and name.startswith("#") and name.endswith("#"):
+        return True
+    return False
 
 
 MAX_MESSAGE_WORDS = 40
@@ -561,7 +574,8 @@ def latest_release_branch(repo: Path, exclude: str | None = None) -> str | None:
     Release branches are named like ``017-export-model`` (derived from archive
     names).  The highest leading number wins; if no branch has a numeric
     prefix, the branch whose tip has the newest committer date is used.
-    *exclude* leaves one branch out of the choice.
+    *exclude* leaves one branch out of the choice.  The GitHub-compatibility
+    branch ``main`` is never considered a release branch.
     """
     r = run_git(
         repo, "for-each-ref", "--sort=-committerdate",
@@ -569,7 +583,7 @@ def latest_release_branch(repo: Path, exclude: str | None = None) -> str | None:
     )
     ordered = [
         ln.strip() for ln in r.stdout.splitlines()
-        if ln.strip() and ln.strip() != exclude
+        if ln.strip() and ln.strip() != exclude and ln.strip() != "main"
     ]
     if not ordered:
         return None
@@ -588,6 +602,36 @@ def branch_exists(repo: Path, branch: str) -> bool:
     return run_git(
         repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
     ).returncode == 0
+
+
+def ensure_github_main(repo: Path, tip_branch: str) -> None:
+    """Make local branch ``main`` point at the tip of *tip_branch*.
+
+    For GitHub compatibility: any existing ``main`` is removed and recreated
+    at the same commit as *tip_branch*.  HEAD stays on *tip_branch* (the
+    release branch that received the commits).  No-op when *tip_branch* is
+    already ``main``.
+    """
+    if not tip_branch or tip_branch == "main":
+        return
+    tip_sha = run_git(repo, "rev-parse", tip_branch).stdout.strip()
+    if not tip_sha:
+        return
+    cur = current_branch(repo)
+    if branch_exists(repo, "main"):
+        if cur == "main":
+            run_git(repo, "checkout", "-q", tip_branch)
+            cur = tip_branch
+        run_git(repo, "branch", "-D", "main")
+        print("Removed existing branch 'main'")
+    run_git(repo, "branch", "main", tip_sha)
+    print(
+        f"Created branch 'main' at tip of '{tip_branch}' "
+        f"({tip_sha[:12]}) for GitHub compatibility"
+    )
+    # Stay on the release branch
+    if cur != tip_branch and current_branch(repo) != tip_branch:
+        run_git(repo, "checkout", "-q", tip_branch)
 
 
 def ensure_branch(repo: Path, branch: str) -> bool:
@@ -846,9 +890,12 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
     if not src.is_dir():
         raise SystemExit(f"Source directory does not exist: {src}")
 
-    # Remove bytecode caches already present in the repo (tracked or not) so
-    # they show up as deletions and are never committed again.
-    for pc in list(repo.rglob("__pycache__")) + list(repo.rglob("*.py[co]")):
+    # Remove bytecode caches and backup files already present in the repo
+    # (tracked or not) so they show up as deletions and are never committed again.
+    stale: list[Path] = list(repo.rglob("__pycache__")) + list(repo.rglob("*.py[co]"))
+    for pattern in ("*~", "*.bak", "*.BAK", "*.orig", "*.swp", "*.swo", "*.tmp", "#*#"):
+        stale.extend(repo.rglob(pattern))
+    for pc in stale:
         if ".git" in pc.relative_to(repo).parts:
             continue
         if pc.is_dir():
@@ -864,13 +911,29 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             "--delete",
             "--exclude",
             ".git",
-            # never copy bytecode caches (tracked ones are removed below)
+            # never copy bytecode caches or backup files
             "--exclude",
             "__pycache__/",
             "--exclude",
             "*.pyc",
             "--exclude",
             "*.pyo",
+            "--exclude",
+            "*~",
+            "--exclude",
+            "*.bak",
+            "--exclude",
+            "*.BAK",
+            "--exclude",
+            "*.orig",
+            "--exclude",
+            "*.swp",
+            "--exclude",
+            "*.swo",
+            "--exclude",
+            "*.tmp",
+            "--exclude",
+            "#*#",
             f"{src}/",
             f"{repo}/",
         ]
@@ -883,7 +946,7 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             dest_dir = repo / rel
             dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
             for f in files:
-                if f.endswith(IGNORED_FILE_SUFFIXES):
+                if is_ignored_path(str(Path(rel) / f) if str(rel) != "." else f):
                     continue
                 file_list.append((Path(root) / f, dest_dir / f))
 
@@ -2407,6 +2470,14 @@ def main() -> None:
                     )
             except Exception as exc:  # noqa: BLE001
                 print(f"warning: branch description tag not created: {exc}", file=sys.stderr)
+
+            # GitHub compatibility: remove any existing "main" and recreate it
+            # pointing at the tip of the release branch that just received commits.
+            if tip_branch and tip_branch != "HEAD":
+                try:
+                    ensure_github_main(args.repo, tip_branch)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"warning: could not update 'main' branch: {exc}", file=sys.stderr)
     finally:
         # A branch created for this import must not survive without commits
         # (failure and rollback, dry-run, "no changes", empty plan).

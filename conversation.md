@@ -338,3 +338,27 @@ never allow commit comments like "update conversation.md to keep the codebase cu
 **Assistant:**
 
 Prompts alone were not enough, so the rule is now enforced in code and the model gets the facts it needs. `strip_filler()` runs on every commit message and removes purpose/justification clauses ("to keep the codebase current and consistent", "to improve readability", "with the latest source changes") and sentences such as "This keeps everything consistent."; a clause is removed only if it contains a filler word. Messages are no longer padded to a minimum length: the 10-word minimum is gone and the maximum is 40 words (one short subject line, optional body). Cause of the vague messages: for small files the model only saw paths and line counts, so it could not say what changed; the planning prompt now includes each file's clipped diff and tells the model to name the concrete change and never write only "update <file>". If nothing is left after cleaning, the message is `Update <files>`. Tested with a mock model that returns the exact filler message: it is reduced to the facts, and the diff and rules appear in the prompt. README updated.
+
+---
+
+**User:**
+
+read the archive. 
+Add a functionality that it never commits backup files (*~,*.BAK, ...)
+
+**Assistant:**
+
+Extended `is_ignored_path()` so backup and editor files are never committed: names ending in `~`, suffixes `.bak`/`.BAK`/`.orig`/`.swp`/`.swo`/`.tmp`, and Emacs-style `#file#`. The same patterns are excluded from rsync and the shutil fallback, and any such files already present in the repository are deleted on sync so they appear as deletions. `.gitignore` and the README "Ignored paths" feature were updated accordingly.
+
+---
+
+**User:**
+
+for github compatibility: 
+* remove any branch named "main"
+* do the commits as in the code to the new branch
+* add a top branch named "main"
+
+**Assistant:**
+
+After a successful import, `ensure_github_main()` removes any existing local `main` branch and recreates it at the tip commit of the release branch that received the commits. HEAD stays on the numbered release branch; `main` is only a pointer for GitHub's default-branch expectation. `latest_release_branch()` ignores `main` so it is never treated as a release. README branch feature description updated.
