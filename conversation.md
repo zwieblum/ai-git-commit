@@ -278,3 +278,13 @@ make the short description more detailed (~ 50 words)
 **Assistant:**
 
 The description tag message is now `short description` (one line, ~50 words: the prompt asks for 40–60, hard cut at 70) + blank line + optional body (whole text capped at 170 words). `--list` shows the short description (first paragraph of the tag, joined to one line) – so existing tags with a one-line subject keep working. `normalize_description()` also handles models that skip the blank line (first line = short description), wrap the short description over several lines, or add `Subject:`/markdown. README updated. Tested normalisation cases and an import with a mock model returning a ~50-word description.
+
+---
+
+**User:**
+
+use only the differences in "conversation.md" as the source of the description.
+
+**Assistant:**
+
+`summarize_progress()` now sends the model nothing but `git diff -U0 <previous tip> HEAD -- <doc>` (for a first import: against the empty tree, i.e. the whole document as additions). The commit messages, the changed-file stat and the "full text if unchanged" fallback are gone; the prompt says to use only these changes. If the document did not change, no tag is created and a note says so (`--describe TEXT` still works). Applies to whichever description document was found (conversation.* first, then README… etc.). README updated. Tested: prompt content for v2 (only the added conversation lines), first import, unchanged document, README fallback.
