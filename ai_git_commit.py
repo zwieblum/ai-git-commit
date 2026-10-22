@@ -284,7 +284,11 @@ def summarize_progress(
         "You write the description of a new version of a software project, to be "
         "stored as the message of an annotated Git tag. Summarize the differences / "
         "progression from the previous version to the current version, based ONLY "
-        "on the document changes provided (use nothing else). Output PLAIN TEXT only, in this layout:\n"
+        "on the document changes provided (use nothing else). The document is only your "
+        "source of information about WHAT CHANGED IN THE PROJECT: describe those project "
+        f"changes themselves and NEVER mention the document ('{doc}'), a conversation, "
+        "requests, users, assistants or the fact that a document/log was updated.\n"
+        "Output PLAIN TEXT only, in this layout:\n"
         f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
         "(between 40 and 60) naming the concrete changes and features of this version; "
         "no 'Subject:' or other label, no markdown;\n"
@@ -292,8 +296,41 @@ def summarize_progress(
         f"3. optionally a body with further details (at most {MAX_DESCRIPTION_WORDS - SHORT_DESCRIPTION_WORDS * 2} words).\n"
         "No markdown headings, no code fences."
     )
-    raw = call_llm(base_url, model, system, "\n\n".join(parts), api_key, max_tokens=1024)
-    return normalize_description(raw)
+    user = "\n\n".join(parts)
+    text = normalize_description(call_llm(base_url, model, system, user, api_key, max_tokens=1024))
+    if _mentions_doc(text, doc):  # one retry with a stricter reminder, then filter
+        retry = call_llm(
+            base_url, model, system,
+            user + f"\n\nREMINDER: do not mention '{doc}', a conversation or a document at all.",
+            api_key, max_tokens=1024,
+        )
+        text = normalize_description(retry)
+    return _drop_doc_mentions(text, doc)
+
+
+def _doc_pattern(doc: str) -> re.Pattern:
+    """Matches the document's file name (and the word 'conversation' for conversation.*)."""
+    alts = [re.escape(doc)]
+    if Path(doc).stem.lower() == "conversation":
+        alts.append(r"\bconversation(?:\.\w+)?\b")
+    return re.compile("|".join(alts), re.IGNORECASE)
+
+
+def _mentions_doc(text: str, doc: str) -> bool:
+    return bool(_doc_pattern(doc).search(text))
+
+
+def _drop_doc_mentions(text: str, doc: str) -> str:
+    """Remove sentences that still talk about the source document itself."""
+    pat = _doc_pattern(doc)
+    paras = []
+    for para in text.split("\n\n"):
+        sentences = re.split(r"(?<=[.!?])\s+", para)
+        kept = [x for x in sentences if not pat.search(x)]
+        if kept:
+            paras.append(" ".join(kept) if len(para.splitlines()) <= 1 else "\n".join(
+                ln for ln in para.splitlines() if not pat.search(ln)))
+    return "\n\n".join(p for p in paras if p.strip())
 
 
 def read_head_file_at(repo: Path, ref: str, path: str) -> bytes:
@@ -2248,8 +2285,9 @@ def main() -> None:
                             args.repo, doc, start_head, args.url, args.model, args.api_key
                         )
                         if not description:
-                            print(f"'{doc}' did not change in this version – no branch description "
-                                  "tag (use --describe TEXT to set one).")
+                            print(f"No description derivable from the changes of '{doc}' (unchanged, "
+                                  "or only about the document itself) – no branch description tag "
+                                  "(use --describe TEXT to set one).")
                     else:
                         print("No conversation.md / README found – no branch description tag "
                               "(use --describe TEXT to set one).")
