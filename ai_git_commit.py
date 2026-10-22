@@ -241,9 +241,9 @@ def use_color() -> bool:
 
 
 def list_branches(repo: Path) -> None:
-    """Print all branches like ``git branch --all``, plus the short
-    description (subject of the ``desc/<branch>`` tag) of each local branch."""
-    r = run_git(repo, "branch", "--all", "--no-color", check=False)
+    """Print local branches (not remote-tracking), plus the short description
+    (subject of the ``desc/<branch>`` tag) of each branch that has one."""
+    r = run_git(repo, "branch", "--no-color", check=False)
     if r.returncode != 0:
         raise SystemExit(f"Could not list branches: {r.stderr.strip()}")
     if not r.stdout.strip():
@@ -272,7 +272,8 @@ def current_branch(repo: Path) -> str:
 
 TAG_PREFIX = "desc/"
 # Documents that describe a release, in priority order (file stem, any extension).
-DESCRIPTION_DOC_STEMS = ("conversation", "readme", "changelog", "changes", "history", "notes")
+# README first so branch descriptions summarize product changes; conversation is fallback.
+DESCRIPTION_DOC_STEMS = ("readme", "conversation", "changelog", "changes", "history", "notes")
 SHORT_DESCRIPTION_WORDS = 50   # target length of the first line shown by --list
 MAX_SHORT_DESCRIPTION_WORDS = 70
 MAX_DESCRIPTION_WORDS = 170
@@ -287,7 +288,7 @@ def description_tag_name(branch: str) -> str:
 def find_description_doc(repo: Path, ref: str = "HEAD") -> str | None:
     """Return the best description document in the root of *ref*, or None.
 
-    Priority: conversation.* first, then README*, CHANGELOG*, CHANGES*,
+    Priority: README* first, then conversation.*, CHANGELOG*, CHANGES*,
     HISTORY*, NOTES* (case-insensitive, any extension).
     """
     r = run_git(repo, "ls-tree", "--name-only", ref, check=False)
@@ -329,8 +330,9 @@ def summarize_progress(
         "progression from the previous version to the current version, based ONLY "
         "on the document changes provided (use nothing else). The document is only your "
         "source of information about WHAT CHANGED IN THE PROJECT: describe those project "
-        f"changes themselves and NEVER mention the document ('{doc}'), a conversation, "
-        "requests, users, assistants or the fact that a document/log was updated.\n"
+        "changes themselves and NEVER mention any document name (README, conversation, "
+        "changelog, …), a conversation, requests, users, assistants, or the fact that a "
+        "document or log was updated.\n"
         "Output PLAIN TEXT only, in this layout:\n"
         f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
         "(between 40 and 60) naming the concrete changes and features of this version; "
@@ -347,7 +349,8 @@ def summarize_progress(
     if _mentions_doc(text, doc):  # one retry with a stricter reminder, then filter
         retry = call_llm(
             base_url, model, system,
-            user + f"\n\nREMINDER: do not mention '{doc}', a conversation or a document at all.",
+            user + "\n\nREMINDER: do not mention README, conversation, any document name, "
+                   "or that a document was updated – only the project changes themselves.",
             api_key, max_tokens=1024,
         )
         text = normalize_description(retry)
@@ -355,10 +358,13 @@ def summarize_progress(
 
 
 def _doc_pattern(doc: str) -> re.Pattern:
-    """Matches the document's file name (and the word 'conversation' for conversation.*)."""
-    alts = [re.escape(doc)]
-    if Path(doc).stem.lower() == "conversation":
-        alts.append(r"\bconversation(?:\.\w+)?\b")
+    """Matches the source document name and common doc names (readme, conversation)."""
+    alts = [
+        re.escape(doc),
+        r"\breadme(?:\.\w+)?\b",
+        r"\bconversation(?:\.\w+)?\b",
+        r"\bchangelog(?:\.\w+)?\b",
+    ]
     return re.compile("|".join(alts), re.IGNORECASE)
 
 
