@@ -240,9 +240,17 @@ def use_color() -> bool:
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
+# Local branches that are not release imports – hidden from --list.
+# ``main`` is the GitHub-compatibility pointer; ``all`` is a common stray name.
+LIST_HIDDEN_BRANCHES = frozenset({"main", "all"})
+
+
 def list_branches(repo: Path) -> None:
-    """Print local branches (not remote-tracking), plus the short description
-    (subject of the ``desc/<branch>`` tag) of each branch that has one."""
+    """Print local release branches (not remote-tracking), plus short descriptions.
+
+    Omits remote-tracking refs and the non-release branches ``main`` and ``all``
+    (``main`` is only a GitHub-compatibility pointer at the latest tip).
+    """
     r = run_git(repo, "branch", "--no-color", check=False)
     if r.returncode != 0:
         raise SystemExit(f"Could not list branches: {r.stderr.strip()}")
@@ -250,7 +258,16 @@ def list_branches(repo: Path) -> None:
         print("No branches found.")
         return
     desc = branch_descriptions(repo)
-    lines = r.stdout.rstrip("\n").splitlines()
+    lines = []
+    for ln in r.stdout.rstrip("\n").splitlines():
+        # Lines look like "  name" or "* name"
+        name = ln[2:].strip() if len(ln) >= 2 else ln.strip()
+        if name in LIST_HIDDEN_BRANCHES:
+            continue
+        lines.append(ln)
+    if not lines:
+        print("No branches found.")
+        return
     width = max((len(ln) for ln in lines if ln[2:] in desc), default=0)
     color = use_color()
     for ln in lines:
