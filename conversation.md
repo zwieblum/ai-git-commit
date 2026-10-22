@@ -158,3 +158,13 @@ check model availability befor committing. Do this by sending "hi" as a test pom
 **Assistant:**
 
 New `check_model()`: after the cheap checks (staged changes, branch-exists) and **before** branch creation, sync and commits, the program sends the test prompt `hi` (system prompt "You are a helpful assistant.", max 32 tokens) through the existing `call_llm()` and prints `Checking model '…' with a test prompt …` / `model OK (reply: '…')`. Unreachable server, HTTP errors (404/503, "model not found"), a malformed answer or a timeout abort with the usual descriptive error before anything is changed (also with `--dry-run`, since it still queries the model). `call_llm()` got `max_tokens` and `allow_empty` parameters; a null/empty completion counts as OK for the check, so reasoning models that spend the small budget on thinking are not rejected. Tested against mock servers: OK, 404, malformed JSON, null content, server down, dry-run; in all failure cases no branch was created. A repository that does not exist yet is still initialised (empty) before the check, as before. README ("Model availability check") updated.
+
+---
+
+**User:**
+
+add a "--revert" option, that removes the last branch from the repository. it must not have "--export" not "--add"
+
+**Assistant:**
+
+New `--revert` mode (needs only `--git`; combining it with `--add`, `--export` or `--list` is an error, and it takes precedence over the implied list default). It removes the "last" branch – chosen with the existing `latest_release_branch()` rule: highest leading number, else newest tip (`exclude=` parameter added so the previous branch can be picked as fallback). If that branch is checked out, the previous branch is checked out first, then the branch is deleted with `git branch -D`. Output: `Removed branch 'X' (was <sha12>); now on 'Y'.` plus a `Restore with: git -C repo branch X <full sha>` line. Safety: refuses to remove the only branch, and refuses when the working tree has uncommitted/untracked changes (message explains how to discard them, e.g. after a failed import). Never creates the repo; import-only options are ignored with a note (shared `note_ignored()` helper). Tested: revert while on the last branch / another branch, dirty tree, single branch, empty repo, option combinations, non-repo path, restore hint, branches without numeric prefix. README ("Revert mode"), `--help` description and examples updated.
