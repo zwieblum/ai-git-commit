@@ -384,3 +384,14 @@ After pushing to github I get this when listing. how can I get rid of the "remot
 **Assistant:**
 
 `--list` now runs `git branch` (local only) instead of `git branch --all`, so remote-tracking refs such as `remotes/origin/…` no longer appear. To prune stale remote-tracking refs from the repo itself (optional, independent of the tool), use `git remote prune origin` or `git fetch --prune`. README list-mode wording updated.
+
+---
+
+**User:**
+
+There is still "all" and "main":
+[list output ending with all and main]
+
+**Assistant:**
+
+`--list` now hides the non-release branches `main` (GitHub-compatibility pointer at the latest tip) and `all`. Only numbered release branches are shown. The branches themselves still exist in the repo (`main` is kept on purpose; delete a stray `all` with `git branch -D all` if you no longer want it). README updated.
