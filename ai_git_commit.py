@@ -56,6 +56,14 @@ def is_ignored_path(path: str) -> bool:
 
 
 MIN_MESSAGE_WORDS = 10
+
+# Prompt rule shared by every prompt that makes the model write commit text.
+NO_FILLER_RULE = (
+    "- No filler or empty phrases: state only what changed. Never add purpose or "
+    "justification clauses such as \"to keep the codebase current and consistent\", "
+    "\"to improve maintainability\", \"for better readability\", \"to ensure "
+    "everything works as expected\" or similar.\n"
+)
 MAX_MESSAGE_WORDS = 100
 API_TIMEOUT = 120
 
@@ -206,7 +214,7 @@ def branch_descriptions(repo: Path) -> dict[str, str]:
 
 
 ANSI_RESET = "\033[0m"
-ANSI_GRAY = "\033[37m"          # light white = gray
+ANSI_GRAY = "\033[90m"          # bright black = gray
 ANSI_LIGHT_GREEN = "\033[92m"   # bright green
 
 
@@ -305,8 +313,7 @@ def summarize_progress(
         "on the document changes provided (use nothing else). The document is only your "
         "source of information about WHAT CHANGED IN THE PROJECT: describe those project "
         f"changes themselves and NEVER mention the document ('{doc}'), a conversation, "
-        "requests, users, assistants or the fact that a document/log was updated. "
-        "Use ASDSTE-100 style for answers.\n"
+        "requests, users, assistants or the fact that a document/log was updated.\n"
         "Output PLAIN TEXT only, in this layout:\n"
         f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
         "(between 40 and 60) naming the concrete changes and features of this version; "
@@ -315,7 +322,8 @@ def summarize_progress(
         f"3. optionally a body with further details (at most {MAX_DESCRIPTION_WORDS - SHORT_DESCRIPTION_WORDS * 2} words).\n"
         "The whole answer must be PLAIN TEXT: no markup of any kind (no markdown, no "
         "asterisks, backticks, underscores for emphasis, headings, bullet points, numbered "
-        "lists, links or code fences) – just sentences."
+        "lists, links or code fences) – just sentences.\n"
+        + NO_FILLER_RULE.rstrip("\n")
     )
     user = "\n\n".join(parts)
     text = normalize_description(call_llm(base_url, model, system, user, api_key, max_tokens=1024))
@@ -1378,9 +1386,9 @@ def normalize_message(msg: str, files: list[str], reserve_words: int = 0) -> str
     minimum = max(0, MIN_MESSAGE_WORDS - reserve_words)
     if _word_count(msg) < minimum:
         shown = ", ".join(files[:3]) + (" and others" if len(files) > 3 else "")
-        msg = f"{msg.rstrip('. ')}: update {shown} to keep the codebase current and consistent"
+        msg = f"{msg.rstrip('. ')}: update {shown}"
         if _word_count(msg) < minimum:
-            msg += " with the latest source changes"
+            msg += "; files: " + ", ".join(files)
         if _word_count(msg) > limit:
             msg = " ".join(msg.split()[:limit])
     return msg
@@ -1429,6 +1437,7 @@ def plan_commits(
             "- Order commits so that earlier commits do not depend on later ones when possible.\n"
             "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
             f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
+            f"{NO_FILLER_RULE}"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
             "- Every listed file must appear in exactly one commit.\n"
@@ -1498,6 +1507,7 @@ def plan_commits(
             "- Hunks may be applied in any order; the program handles shifted line numbers.\n"
             "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
             f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
+            f"{NO_FILLER_RULE}"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, one per hunk, with keys:\n"
             '  "hunk" (integer hunk index), "message" (string).\n'
