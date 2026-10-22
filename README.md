@@ -118,7 +118,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints **local** branches only (same as `git branch`, not `git branch --all`; remote-tracking refs such as `remotes/origin/…` are omitted). The current branch is marked with `*`. Each branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints **local release branches** only (same idea as `git branch`, not `git branch --all`). Remote-tracking refs (`remotes/origin/…`) are omitted, and so are the non-release branches `main` (GitHub-compatibility pointer at the latest tip) and `all`. The current branch is marked with `*`. Each listed branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -197,7 +197,7 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
 | `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
 | `--cleanup` | no | no | Cleanup mode: permanently delete all commits/objects no branch reaches (reflog expire + `gc --prune=now`), no confirmation; not combinable with `--add` / `--export` / `--revert` / `--list` |
-| `--list` | no | no | List mode: print local branches only (like `git branch`, not `--all`) and exit; needs no other option; this is the default when neither `--add` nor `--export` is given |
+| `--list` | no | no | List mode: print local release branches only (hides `main`, `all`, and remote-tracking refs); needs no other option; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
