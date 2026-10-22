@@ -117,7 +117,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the subject line of the tag message), e.g. `  013-llm-errors  Add retries for LLM errors`; other lines are unchanged. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`; other lines are unchanged. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -146,7 +146,7 @@ python ai_git_commit.py --repo /path/to/repo --revert
 
 After an import that created commits, the tip of the branch gets an **annotated tag** `desc/<branch>` (e.g. `desc/013-llm-errors`) whose message is the description of that version:
 
-* If the repository contains a description document in its root – `conversation.*` first, then `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a short summary (subject line + body, ≤ 120 words) of the **progression from the previous version** to the current one. Source: the diff of that document between the previous tip and the new tip; if the document is new or unchanged, its full text; plus the commit messages and changed-file stat.
+* If the repository contains a description document in its root – `conversation.*` first, then `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total) of the **progression from the previous version** to the current one. Source: the diff of that document between the previous tip and the new tip; if the document is new or unchanged, its full text; plus the commit messages and changed-file stat.
 * `--describe TEXT` overrides this: TEXT is used as the tag message (no model call).
 * Without a description document and without `--describe` no tag is created (a note is printed).
 * Re-importing into an existing branch (`--branch NAME`) replaces its tag. `--dry-run` and imports without commits create nothing. A failure while creating the tag only prints a warning; the commits stay.
