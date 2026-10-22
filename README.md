@@ -129,6 +129,20 @@ Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignor
 
 `--list` cannot be combined with `--export` or `--add`, and it never creates the repository.
 
+### Revert mode
+
+Requires only `--git`. Removes the **last branch** – the one holding the most recent import – from the repository, e.g. to undo a bad import:
+
+```bash
+python ai_git_commit.py --git /path/to/repo --revert
+```
+
+* "Last" is the branch with the highest leading number (`013-llm-errors` beats `012-…`); without numbered branches the branch whose tip is newest is used.
+* If that branch is checked out, the previous branch (the next one by the same rule) is checked out first, so the working tree returns to the previous release.
+* The branch is deleted with `git branch -D`. The output shows the tip commit, e.g. `Restore with: git -C repo branch 013-llm-errors <sha>`, so the removal can be undone.
+* Safety: the program refuses to remove the **only** branch, and refuses to run when the working tree has uncommitted or untracked changes (the message shows how to discard them, e.g. after a failed import).
+* `--revert` cannot be combined with `--add`, `--export` or `--list` (error). Import-only options such as `--name` are ignored with a note on stderr. It never creates the repository.
+
 ### Arguments
 
 | Flag | Import | Export | Description |
@@ -145,6 +159,7 @@ Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignor
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
+| `--revert` | no | no | Revert mode: remove the last branch from the repository (needs only `--git`; not combinable with `--add` / `--export` / `--list`) |
 | `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git`; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
