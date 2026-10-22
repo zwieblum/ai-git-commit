@@ -142,6 +142,19 @@ python ai_git_commit.py --repo /path/to/repo --revert
 * Safety: the program refuses to remove the **only** branch, and refuses to run when the working tree has uncommitted or untracked changes (the message shows how to discard them, e.g. after a failed import).
 * `--revert` cannot be combined with `--add`, `--export` or `--list` (error). Import-only options such as `--name` are ignored with a note on stderr. It never creates the repository.
 
+### Cleanup mode
+
+Requires no other option (`--repo` defaults to `./repository`). Permanently deletes everything that no branch reaches any more, e.g. the commits of branches removed with `--revert`:
+
+```bash
+python ai_git_commit.py --repo /path/to/repo --cleanup
+```
+
+* Runs `git reflog expire --expire=now --all` and `git gc --prune=now` **without any confirmation**; it cannot be undone (the `Restore with:` hint printed by `--revert` stops working).
+* Output: number of unreachable commits/objects removed and the repository size before/after.
+* Affects only the local repository, and only unreachable data; all branches stay untouched (their reflog history is dropped, too).
+* `--cleanup` cannot be combined with `--add`, `--export`, `--revert` or `--list` (error). Import-only options are ignored with a note. It never creates the repository.
+
 ### Arguments
 
 | Flag | Import | Export | Description |
@@ -159,6 +172,7 @@ python ai_git_commit.py --repo /path/to/repo --revert
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
 | `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
+| `--cleanup` | no | no | Cleanup mode: permanently delete all commits/objects no branch reaches (reflog expire + `gc --prune=now`), no confirmation; not combinable with `--add` / `--export` / `--revert` / `--list` |
 | `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs no other option; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
