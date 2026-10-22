@@ -1,2 +1,10 @@
 __pycache__/
 *.py[cod]
+*~
+*.bak
+*.BAK
+*.orig
+*.swp
+*.swo
+*.tmp
+#*#
