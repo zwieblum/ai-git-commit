@@ -269,7 +269,40 @@ Rules enforced in the prompt (and cleaned up in code):
 - Every changed path appears in exactly one commit.
 - Leftover paths (if the model omits any) are placed in a final catch-all commit.
 
+**Large files (> 200 changed lines): the model plans, the program splits.**
+The program parses the diff `HEAD → working file` into hunks and shows them to
+the model, which only returns a *plan*: the order of the hunks and one commit
+message per hunk.
+
+```json
+[
+  {"hunk": 2, "message": "Add retry loop to the download helper ..."},
+  {"hunk": 0, "message": "Rename config keys to match the new schema ..."}
+]
+```
+
+Unknown/duplicate indices are dropped; hunks the model forgot get a generic
+message and are appended in file order. Before planning, the program checks
+that applying all hunks to the HEAD version reproduces the working file; if not,
+the file is committed as a whole. The splitting itself is done in step 7.
+
 ### 7. Applying commits
+
+Large files are split **by the program, one hunk at a time** (no `git apply`,
+no model involvement):
+
+1. take the file as it is in the repository (`git show HEAD:<file>`),
+2. apply exactly **one** hunk (line shifts caused by already committed hunks
+   are tracked; the lines the hunk expects are verified first),
+3. stage and commit it,
+4. repeat until all hunks are committed; the result must equal the synced file.
+
+**If any commit fails, all commits made by this run are reverted:** HEAD is
+reset to where it was before the first commit and the synced files are put
+back in the working tree (uncommitted); the program then exits with an error.
+(A branch created for the import is kept; see "Existing branch check".)
+
+For every planned commit (small files / deletions are staged whole):
 
 For each planned commit:
 
@@ -311,8 +344,9 @@ dependency. HTTP is handled solely by `requests`. Progress UI is provided by
 ## Limitations
 
 - Small files are grouped at **file level**. A single file whose diff exceeds
-  200 lines is split into **functional hunks** by the model; those hunks are
-  applied sequentially as separate commits.
+  200 lines is split into hunks: the model plans order and messages, the
+  program applies and commits one hunk at a time. A new file consists of a
+  single hunk and is therefore committed as a whole.
 - The model must return valid JSON; the script extracts the first JSON array it
   finds (tolerates markdown fences).
 - Pure-deletion commits have no surviving files for mtime and therefore use the
