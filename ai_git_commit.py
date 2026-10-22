@@ -967,56 +967,65 @@ def _get_file_diff(repo: Path, path: str) -> bytes:
     full = repo / path
 
     if has_commits(repo):
-        in_head = run_git(
-            repo, "ls-tree", "HEAD", "--", path, check=False
-        ).stdout.strip()
+        in_head = run_git(repo, "ls-tree", "HEAD", "--", path, check=False).stdout.strip()
         if in_head:
-            r = run_git(repo, "diff", "HEAD", "--", path, check=False)
-            return r.stdout or ""
+            r = _git_bytes(repo, "diff", "--no-color", "--no-ext-diff", "-U3", "HEAD", "--", path)
+            return r.stdout or b""
         # File is not in HEAD → treat as new (fall through to synthesise)
 
-    # Brand-new repo or untracked file: synthesise a "new file" diff
     if not full.is_file():
-        return ""
+        return b""
     try:
-        content = full.read_text(encoding="utf-8", errors="replace")
+        lines = _split_lines(full.read_bytes())
     except OSError:
-        return ""
-    lines = content.splitlines(keepends=True)
+        return b""
     if not lines:
-        return ""
-    header = (
-        f"diff --git a/{path} b/{path}\n"
-        f"new file mode 100644\n"
-        f"--- /dev/null\n"
-        f"+++ b/{path}\n"
-        f"@@ -0,0 +1,{len(lines)} @@\n"
-    )
-    body = "".join("+" + (ln if ln.endswith("\n") else ln + "\n") for ln in lines)
-    return header + body
-
-
-def _build_partial_patch(path: str, all_hunks: list[DiffHunk], indices: list[int], is_new: bool) -> str:
-    """Build a valid unified diff that contains only the selected hunks."""
-    selected = [all_hunks[i] for i in indices if 0 <= i < len(all_hunks)]
-    if not selected:
-        return ""
-    if is_new and indices == list(range(len(all_hunks))):
-        # full new file – return complete synthetic diff is handled by caller
-        pass
-    parts = [
-        f"diff --git a/{path} b/{path}\n",
+        return b""
+    out = [
+        f"diff --git a/{path} b/{path}\n".encode(),
+        b"new file mode 100644\n",
+        b"--- /dev/null\n",
+        f"+++ b/{path}\n".encode(),
+        f"@@ -0,0 +1,{len(lines)} @@\n".encode(),
     ]
-    if is_new and indices[0] == 0:
-        parts.append(f"new file mode 100644\n")
-        parts.append(f"--- /dev/null\n")
-        parts.append(f"+++ b/{path}\n")
-    else:
-        parts.append(f"--- a/{path}\n")
-        parts.append(f"+++ b/{path}\n")
-    for h in selected:
-        parts.append(h.body if h.body.endswith("\n") else h.body + "\n")
-    return "".join(parts)
+    for ln in lines:
+        if ln.endswith(b"\n"):
+            out.append(b"+" + ln)
+        else:
+            out.append(b"+" + ln + b"\n\\ No newline at end of file\n")
+    return b"".join(out)
+
+
+def apply_hunk(current: bytes, hunk: DiffHunk, applied: list[DiffHunk]) -> bytes:
+    """Apply ONE hunk to *current* (the file as it is now in the repository).
+
+    *applied* are the hunks of the same diff that are already part of
+    *current*; those located above this hunk shifted its line numbers.  The
+    lines the hunk expects are verified before anything is changed.
+    """
+    lines = _split_lines(current)
+    start = hunk.pos + sum(
+        len(a.new_lines) - len(a.old_lines) for a in applied if a.pos < hunk.pos
+    )
+    end = start + len(hunk.old_lines)
+    if start < 0 or lines[start:end] != hunk.old_lines:
+        raise HunkError(
+            f"hunk {hunk.index} ({hunk.header}) does not match the file at line {start + 1}"
+        )
+    return b"".join(lines[:start] + hunk.new_lines + lines[end:])
+
+
+def verify_hunks(repo: Path, path: str, hunks: list[DiffHunk]) -> bool:
+    """Dry run: do all hunks together turn the HEAD version into the working file?"""
+    try:
+        cur = read_head_file(repo, path)
+        done: list[DiffHunk] = []
+        for h in hunks:
+            cur = apply_hunk(cur, h, done)
+            done.append(h)
+        return cur == (repo / path).read_bytes()
+    except (HunkError, OSError):
+        return False
 
 
 def _extract_json_array(raw: str) -> list:
