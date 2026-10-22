@@ -258,3 +258,13 @@ Added an optional positional `PATH` (parsed with `parse_intermixed_args`, so it 
 **Assistant:**
 
 `--list` still prints the `git branch --all` lines, but a local branch with a `desc/<branch>` tag now gets the subject line of the tag message appended (aligned in a column; remote/other lines unchanged, branches without a tag unchanged). Descriptions are read in one `git for-each-ref` call. README updated. Tested with described, undescribed, slash-named and remote branches.
+
+---
+
+**User:**
+
+remove the "Subject:" prefix (--list showed `**Subject:** …` / `**Subject: …**`)
+
+**Assistant:**
+
+New `clean_subject()` strips markdown emphasis (`*`, backticks, `#`) and a leading `Subject:` / `Title:` label (case-insensitive) from the first line. It is applied when a description is generated (so new tags are clean), and when `--list` reads existing tags (so tags created by earlier versions display correctly without being rewritten). The summary prompt also tells the model not to use a prefix or markdown. Tested with both shown variants plus plain, `Title:`, lowercase and underscore-containing subjects.
