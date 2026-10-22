@@ -189,7 +189,8 @@ def require_git_repo(repo: Path) -> None:
 
 
 def branch_descriptions(repo: Path) -> dict[str, str]:
-    """Map branch name → subject line of its ``desc/<branch>`` annotated tag."""
+    """Map branch name → short description (first paragraph, as one line) of its
+    ``desc/<branch>`` annotated tag."""
     r = run_git(
         repo, "for-each-ref", f"refs/tags/{TAG_PREFIX}",
         "--format=%(refname)%09%(contents:subject)", check=False,
@@ -229,7 +230,9 @@ def current_branch(repo: Path) -> str:
 TAG_PREFIX = "desc/"
 # Documents that describe a release, in priority order (file stem, any extension).
 DESCRIPTION_DOC_STEMS = ("conversation", "readme", "changelog", "changes", "history", "notes")
-MAX_DESCRIPTION_WORDS = 120
+SHORT_DESCRIPTION_WORDS = 50   # target length of the first line shown by --list
+MAX_SHORT_DESCRIPTION_WORDS = 70
+MAX_DESCRIPTION_WORDS = 170
 MAX_PROMPT_CHARS = 12000
 
 
@@ -292,9 +295,13 @@ def summarize_progress(
         "You write the description of a new version of a software project, to be "
         "stored as the message of an annotated Git tag. Summarize the differences / "
         "progression from the previous version to the current version, based mainly "
-        f"on the document provided. Output PLAIN TEXT only: one subject line (<=72 "
-        "characters, WITHOUT a 'Subject:' prefix or any markdown), a blank line, then a short body of what changed. No markdown "
-        f"headings, no code fences, at most {MAX_DESCRIPTION_WORDS} words in total."
+        "on the document provided. Output PLAIN TEXT only, in this layout:\n"
+        f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
+        "(between 40 and 60) naming the concrete changes and features of this version; "
+        "no 'Subject:' or other label, no markdown;\n"
+        "2. a blank line;\n"
+        f"3. optionally a body with further details (at most {MAX_DESCRIPTION_WORDS - SHORT_DESCRIPTION_WORDS * 2} words).\n"
+        "No markdown headings, no code fences."
     )
     raw = call_llm(base_url, model, system, "\n\n".join(parts), api_key, max_tokens=1024)
     return normalize_description(raw)
@@ -316,23 +323,34 @@ def clean_subject(line: str) -> str:
 
 
 def normalize_description(text: str) -> str:
-    """Strip code fences, trim, and cut to MAX_DESCRIPTION_WORDS words."""
+    """Strip code fences; return ``short description`` [+ blank line + body].
+
+    The short description (shown by ``--list``) is the first paragraph joined
+    into ONE line without label/markdown, cut to MAX_SHORT_DESCRIPTION_WORDS;
+    the whole text is cut to MAX_DESCRIPTION_WORDS words.
+    """
     text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip())
-    first, sep, rest = text.partition("\n")
-    text = clean_subject(first) + sep + rest
-    out: list[str] = []
-    used = 0
-    for line in text.splitlines():
-        n = len(line.split())
-        if used + n <= MAX_DESCRIPTION_WORDS:
-            out.append(line.rstrip())
-            used += n
-        else:
-            room = MAX_DESCRIPTION_WORDS - used
-            if room > 0 and line.strip():
-                out.append(" ".join(line.split()[:room]))
-            break
-    return "\n".join(out).strip()
+    head, sep, body = text.partition("\n\n")
+    if not sep:  # no blank line: first line is the short description
+        head, _, body = text.partition("\n")
+    short = clean_subject(" ".join(head.split()))
+    short = " ".join(short.split()[:MAX_SHORT_DESCRIPTION_WORDS])
+    body = body.strip()
+    if body:
+        room = MAX_DESCRIPTION_WORDS - len(short.split())
+        out: list[str] = []
+        used = 0
+        for line in body.splitlines():
+            n = len(line.split())
+            if used + n <= room:
+                out.append(line.rstrip())
+                used += n
+            else:
+                if room - used > 0 and line.strip():
+                    out.append(" ".join(line.split()[: room - used]))
+                break
+        body = "\n".join(out).strip()
+    return f"{short}\n\n{body}" if body else short
 
 
 def tag_branch_description(
