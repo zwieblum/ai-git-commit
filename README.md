@@ -327,6 +327,10 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 
 `__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
 
+### Model availability check
+
+Before the repository is touched (no branch created, no files synced, no commits) the program sends the test prompt `hi` to the model (a tiny completion, 32 tokens max). If the server is unreachable, the model is unavailable or the answer is malformed, the run aborts with a clear error and the repository content stays as it was (a repository that did not exist yet is still initialised empty first, as before). The check also runs with `--dry-run`, because that mode still asks the model for a commit plan. On success a line such as `model OK (reply: 'Hello! How can I help?')` is shown.
+
 ### Existing branch check
 
 If `--add` is an archive and no `--branch` is given, the branch name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a local branch with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass `--branch NAME` explicitly if you really want to add the contents to an existing branch. If an earlier import of the archive failed before committing anything, delete the leftover branch (`git branch -D NAME`) and run again. Directory sources are not affected.
