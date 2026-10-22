@@ -198,3 +198,23 @@ remove the progress bar; rename "--git" to "--repo"; when no repository is given
 **Assistant:**
 
 Progress bars are gone: `tqdm` import, all bars and `tqdm.write` (now plain `print`) removed, `tqdm` dropped from `requirements.txt`, and rsync no longer gets `--info=progress2`. `--git` was renamed to `--repo` everywhere (option, `args.repo`, help, README); the old name is rejected. `--repo` is no longer required: without it `./repository` is used (so `ai_git_commit.py --list` lists `./repository`, an import creates it). Tested with a mock model: import into the default `repository`, `--repo` explicit, `--git` rejected, list/revert/export with the default.
+
+---
+
+**User:**
+
+is there a way to clean up a repository? e.g. delete all removed commits?
+
+**Assistant:**
+
+Yes: deleted branches leave unreachable commits (kept by the reflog and object store). `git reflog expire --expire=now --all && git gc --prune=now` removes them for good (irreversible, only local). Offered a `--cleanup` mode.
+
+---
+
+**User:**
+
+add the --cleanup without confirmation
+
+**Assistant:**
+
+New `--cleanup` mode (`cleanup_repository()`): counts unreachable commits/objects (`git fsck --unreachable --no-reflogs`), runs `git reflog expire --expire=now --all` and `git gc --prune=now -q` without any confirmation, and prints the number removed plus the repository size before/after. Needs only `--repo` (default `./repository`), never creates the repository, cannot be combined with `--add`/`--export`/`--revert`/`--list`; import-only options are ignored with a note. README (new "Cleanup mode", argument table) and `--help` updated. Tested: after `--revert` the deleted commit exists until `--cleanup` and is gone afterwards, branches intact, size shrinks; error cases and missing repo.
