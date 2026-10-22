@@ -1234,29 +1234,20 @@ def plan_commits(
                 if 0 <= xi < len(hunks) and xi not in assigned:
                     clean_idx.append(xi)
                     assigned.add(xi)
-            clean_idx.sort()
-            if clean_idx:
+            if clean_idx:  # normally exactly one hunk per commit
                 file_plans.append(
-                    CommitPlan(
-                        message=msg,
-                        files=[c.path],
-                        hunks={c.path: clean_idx},
-                    )
+                    CommitPlan(message=msg, files=[c.path], hunks={c.path: clean_idx})
                 )
 
-        # any leftover hunks → final catch-all for this file
-        missing = sorted(set(range(len(hunks))) - assigned)
-        if missing:
+        # hunks the model forgot: one commit each, in file order, after the planned ones
+        for hi in sorted(set(range(len(hunks))) - assigned):
             file_plans.append(
                 CommitPlan(
-                    message=f"chore: remaining changes in {c.path}",
+                    message=f"update {c.path}: apply hunk {hi + 1} of {len(hunks)} ({hunks[hi].header})",
                     files=[c.path],
-                    hunks={c.path: missing},
+                    hunks={c.path: [hi]},
                 )
             )
-
-        # keep sequential order by first hunk index
-        file_plans.sort(key=lambda p: min(p.hunks.get(c.path, [0])))
         plans.extend(file_plans)
 
     # Ensure the archive name appears in every commit message when applicable,
