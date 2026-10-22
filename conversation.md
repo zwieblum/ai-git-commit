@@ -248,3 +248,13 @@ when "--add" is missing but a stray filename/directory is given, then imply "--a
 **Assistant:**
 
 Added an optional positional `PATH` (parsed with `parse_intermixed_args`, so it works before, between and after options). Without `--add` it becomes `--add PATH` (note on stderr). Errors: `--add X` plus a stray path ("two sources given"), and a stray path with `--export`/`--revert`/`--cleanup`/`--list` (for `--export`, a word right after it is still the branch name). `--help` example and README ("Omitting --add") added. Tested: path before/after/between options, both given, `--export`/`--revert` combinations, no positional → list.
+
+---
+
+**User:**
+
+"--list" should print the short description of the branch, too
+
+**Assistant:**
+
+`--list` still prints the `git branch --all` lines, but a local branch with a `desc/<branch>` tag now gets the subject line of the tag message appended (aligned in a column; remote/other lines unchanged, branches without a tag unchanged). Descriptions are read in one `git for-each-ref` call. README updated. Tested with described, undescribed, slash-named and remote branches.
