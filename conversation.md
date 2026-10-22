@@ -238,3 +238,13 @@ when "conversation.md" (prioritized) or something similar (README ...) is presen
 **Assistant:**
 
 After a successful import the branch tip gets an annotated tag `desc/<branch>`. Message: `--describe TEXT` if given; otherwise, if the repository root holds `conversation.*` (first), `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*` or `NOTES*`, a model-written summary (subject + body, ≤120 words) of the progression since the previous tip, built from the diff of that document (full text if new/unchanged) plus commit messages and file stat. No document and no `--describe` → no tag. Tag names are namespaced (`desc/…`) so they never clash with branch names; re-import into the same branch replaces the tag; failures only warn; `--dry-run` creates nothing. `--revert` now deletes the branch's tag too (it would keep the commits reachable). I read your option as `--describe`. Tested with a mock model: conversation.md diff reaches the prompt, README fallback, override without model call, no-doc case, dry-run, revert removing the tag. README updated.
+
+---
+
+**User:**
+
+when "--add" is missing but a stray filename/directory is given, then imply "--add" on that
+
+**Assistant:**
+
+Added an optional positional `PATH` (parsed with `parse_intermixed_args`, so it works before, between and after options). Without `--add` it becomes `--add PATH` (note on stderr). Errors: `--add X` plus a stray path ("two sources given"), and a stray path with `--export`/`--revert`/`--cleanup`/`--list` (for `--export`, a word right after it is still the branch name). `--help` example and README ("Omitting --add") added. Tested: path before/after/between options, both given, `--export`/`--revert` combinations, no positional → list.
