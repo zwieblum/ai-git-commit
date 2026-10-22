@@ -22,7 +22,8 @@ and chronologically ordered by the original file modification times.
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
 | **Output** | Plain text output, no progress bars. |
-| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
+| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. After a successful import the tip of the release branch is also pointed to by a local `main` branch (any previous `main` is removed first) for GitHub compatibility; commits still land on the numbered release branch. |
+| **Ignored paths** | Bytecode caches (`__pycache__`, `*.pyc`, `*.pyo`) and common backup/editor files (`*~`, `*.bak`, `*.BAK`, `*.orig`, `*.swp`, `*.swo`, `*.tmp`, `#*#`) are never synced into the repository and never appear in commits. Existing copies in the repo are deleted so they show up as deletions. |
 | **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: branch with the newest commit). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
 
