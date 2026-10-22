@@ -1789,6 +1789,10 @@ def main() -> None:
             "  %(prog)s --repo ./repo --url http://localhost:8080/v1 \\\n"
             "      --add snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
             "\n"
+            "  # '--add' may be omitted: a stray path is taken as the source\n"
+            "  %(prog)s --url http://localhost:8080/v1 --name 'Botter <ai@localhost>' \\\n"
+            "      snapshot-2020.zip\n"
+            "\n"
             "  # Import with an explicit model\n"
             "  %(prog)s --repo ./repo --url http://localhost:8080/v1 \\\n"
             "      --model qwen2.5-coder --add snapshot-2020.zip \\\n"
@@ -1845,6 +1849,14 @@ def main() -> None:
         type=Path,
         metavar="PATH",
         help="Source directory or archive (.zip / .tar / .tar.gz / …)",
+    )
+    import_opts.add_argument(
+        "source",
+        nargs="?",
+        default=None,
+        type=Path,
+        metavar="PATH",
+        help="A stray source directory/archive without --add is taken as --add PATH",
     )
     import_opts.add_argument(
         "--name",
@@ -1950,7 +1962,21 @@ def main() -> None:
         "not wrap the files in a top-level <branch>/ directory (default: on). "
         "Use --no-strip to keep the <branch>/ directory",
     )
-    args = parser.parse_args()
+    args = parser.parse_intermixed_args()
+
+    # A stray path without --add means "--add PATH".
+    if args.source is not None:
+        if args.add is not None:
+            parser.error(
+                f"two sources given: --add {args.add} and '{args.source}' – use only one"
+            )
+        if args.export is not None or args.revert or args.cleanup or args.list:
+            parser.error(
+                f"unexpected argument '{args.source}': a source path is only valid for an "
+                "import (not with --export / --revert / --cleanup / --list)"
+            )
+        args.add = args.source
+        print(f"Note: no --add given – using '{args.source}' as --add.", file=sys.stderr)
 
     if args.cleanup:
         if args.export is not None or args.add is not None or args.list or args.revert:
