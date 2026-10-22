@@ -118,7 +118,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`; other lines are unchanged. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints **local** branches only (same as `git branch`, not `git branch --all`; remote-tracking refs such as `remotes/origin/…` are omitted). The current branch is marked with `*`. Each branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -147,7 +147,7 @@ python ai_git_commit.py --repo /path/to/repo --revert
 
 After an import that created commits, the tip of the branch gets an **annotated tag** `desc/<branch>` (e.g. `desc/013-llm-errors`) whose message is the description of that version:
 
-* If the repository contains a description document in its root – `conversation.*` first, then `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total). The **only source is the diff of that document** between the previous tip and the new tip (for a first import: the whole document); commit messages and other files are not used. The description covers the **project changes**; it never mentions the document, a conversation or the fact that a log was updated (prompt rule, one retry, and mentioning sentences are dropped). If the document did not change, or nothing is left after that, no tag is created (a note is printed).
+* If the repository contains a description document in its root – `README*` first, then `conversation.*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total). The **only source is the diff of that document** between the previous tip and the new tip (for a first import: the whole document); commit messages and other files are not used. The description covers the **project changes**; it never mentions README, conversation, any document name, or the fact that a log was updated (prompt rule, one retry, and mentioning sentences are dropped). If the document did not change, or nothing is left after that, no tag is created (a note is printed).
 * The description is **plain text**: any markup the model produces (emphasis, backticks, headings, list markers, quotes, links, code fences) is removed; `--list` strips it from older tags as well.
 * `--describe TEXT` overrides this: TEXT is used as the tag message (no model call).
 * Without a description document and without `--describe` no tag is created (a note is printed).
@@ -190,14 +190,14 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
 | `--branch` | no | no | Branch to commit on (default: archive basename when `--add` is an archive) |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
-| `--describe` | no | no | Text for the branch description tag `desc/<branch>`; overrides the automatic summary from conversation.md / README… |
+| `--describe` | no | no | Text for the branch description tag `desc/<branch>`; overrides the automatic summary from README / conversation… |
 | `--dry-run` | no | no | Plan commits only; do not write |
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
 | `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
 | `--cleanup` | no | no | Cleanup mode: permanently delete all commits/objects no branch reaches (reflog expire + `gc --prune=now`), no confirmation; not combinable with `--add` / `--export` / `--revert` / `--list` |
-| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs no other option; this is the default when neither `--add` nor `--export` is given |
+| `--list` | no | no | List mode: print local branches only (like `git branch`, not `--all`) and exit; needs no other option; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
