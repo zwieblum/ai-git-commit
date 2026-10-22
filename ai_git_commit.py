@@ -3,7 +3,7 @@
 AI-assisted Git committer: sync a source directory into a local Git repo and
 create one or more commits with LLM-generated messages.
 
-Changes are grouped into functionally coherent commits. Each commit's total
+Changes are grouped into functionally coherent commits (the model plans; large files are split hunk by hunk by the program). Each commit's total
 changed lines (insertions + deletions) is kept at or below 200 when possible.
 Single files larger than 200 lines are committed alone.
 
