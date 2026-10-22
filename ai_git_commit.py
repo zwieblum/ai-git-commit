@@ -55,16 +55,20 @@ def is_ignored_path(path: str) -> bool:
     return any(d in parts for d in IGNORED_DIR_NAMES) or path.endswith(IGNORED_FILE_SUFFIXES)
 
 
-MIN_MESSAGE_WORDS = 10
+MAX_MESSAGE_WORDS = 40
 
-# Prompt rule shared by every prompt that makes the model write commit text.
+# Prompt rules shared by every prompt that makes the model write commit text.
 NO_FILLER_RULE = (
-    "- No filler or empty phrases: state only what changed. Never add purpose or "
-    "justification clauses such as \"to keep the codebase current and consistent\", "
-    "\"to improve maintainability\", \"for better readability\", \"to ensure "
-    "everything works as expected\" or similar.\n"
+    "- State clearly and concisely WHAT changed, naming the concrete change (what was "
+    "added, removed, fixed or renamed, and where). Never describe a purpose, benefit or "
+    "justification: no clauses like \"to keep the codebase current and consistent\", "
+    "\"to improve maintainability\", \"for better readability\" or \"to ensure everything "
+    "works as expected\". Never write a message that only says \"update <file>\".\n"
 )
-MAX_MESSAGE_WORDS = 100
+MESSAGE_RULE = (
+    "- Commit messages: imperative mood, ONE short subject line (<=72 chars, normally "
+    f"under 15 words); add a body only when needed, at most {MAX_MESSAGE_WORDS} words in total.\n"
+)
 API_TIMEOUT = 120
 
 
@@ -1359,17 +1363,61 @@ def _word_count(text: str) -> int:
     return len(text.split())
 
 
-def normalize_message(msg: str, files: list[str], reserve_words: int = 0) -> str:
-    """Force a commit message to MIN_MESSAGE_WORDS..MAX_MESSAGE_WORDS words.
+_FILLER_TRIGGER = re.compile(
+    r"[,;:]?\s*\b(?:in order to|so that|so as to|with the latest|which (?:keeps|ensures|improves|helps|maintains)"
+    r"|to (?:keep|ensure|maintain|improve|enhance|make sure|stay|help|promote|support"
+    r"|facilitate|preserve|guarantee|reflect)"
+    r"|for (?:better|improved|enhanced|increased|greater|clearer|consistency|clarity"
+    r"|maintainability|readability))\b[^.;\n]*",
+    re.IGNORECASE,
+)
+_FILLER_WORDS = re.compile(
+    r"current|consistent|consistency|up[- ]to[- ]date|in sync|maintainab|readab|clarity|"
+    r"best practice|code ?quality|overall|as expected|properly|smoothly|latest",
+    re.IGNORECASE,
+)
+_FILLER_SENTENCE = re.compile(
+    r"^\s*(?:this|these|that|it|which)\s+(?:change|update|commit|ensures?|keeps?|improves?|helps?"
+    r"|maintains?|makes?)\b.*(?:" + _FILLER_WORDS.pattern + r").*$",
+    re.IGNORECASE,
+)
 
-    ``reserve_words`` words are kept free for a suffix appended later (e.g. the
-    archive tag).  Too-long messages are cut (preferably at a sentence/line
-    end); too-short ones are extended with the affected file names.
+
+def strip_filler(msg: str) -> str:
+    """Remove purpose / justification filler from a commit message.
+
+    Drops trailing clauses such as "to keep the codebase current and consistent"
+    (a clause is only removed when it contains a filler word, so a legitimate
+    "add check to ensure the port is free" stays) and whole sentences such as
+    "This keeps everything consistent."
     """
-    msg = msg.strip()
+    lines: list[str] = []
+    for line in msg.splitlines():
+        line = _FILLER_TRIGGER.sub(
+            lambda m: "" if _FILLER_WORDS.search(m.group(0)) else m.group(0), line
+        )
+        parts = re.split(r"(?<=[.!?])\s+", line)
+        parts = [x for x in parts if not _FILLER_SENTENCE.match(x)]
+        line = " ".join(parts).rstrip(" ,;:")
+        lines.append(line)
+    out = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", out)
+
+
+def normalize_message(msg: str, files: list[str], reserve_words: int = 0) -> str:
+    """Return a concise, filler-free commit message of at most MAX_MESSAGE_WORDS words.
+
+    Filler clauses are removed first.  ``reserve_words`` words are kept free for
+    a suffix appended later (e.g. the archive tag).  Too-long messages are cut
+    at a line end, or at the word limit.  Messages are never padded: when
+    nothing is left after cleaning, the message just names the changed files.
+    """
+    msg = strip_filler(msg.strip())
+    if not msg:
+        shown = ", ".join(files[:3]) + (" and others" if len(files) > 3 else "")
+        msg = f"Update {shown}"
     limit = max(1, MAX_MESSAGE_WORDS - reserve_words)
     if _word_count(msg) > limit:
-        # Keep original line structure while cutting at the word limit.
         out: list[str] = []
         used = 0
         for line in msg.splitlines():
@@ -1383,15 +1431,21 @@ def normalize_message(msg: str, files: list[str], reserve_words: int = 0) -> str
                     out.append(" ".join(line.split()[:room]))
                 break
         msg = "\n".join(out).strip()
-    minimum = max(0, MIN_MESSAGE_WORDS - reserve_words)
-    if _word_count(msg) < minimum:
-        shown = ", ".join(files[:3]) + (" and others" if len(files) > 3 else "")
-        msg = f"{msg.rstrip('. ')}: update {shown}"
-        if _word_count(msg) < minimum:
-            msg += "; files: " + ", ".join(files)
-        if _word_count(msg) > limit:
-            msg = " ".join(msg.split()[:limit])
     return msg
+
+
+def _diff_for_prompt(repo: Path, c: FileChange, limit: int) -> str:
+    """Clipped diff of one changed file for the planning prompt ('' when unavailable)."""
+    if limit < 200:
+        return ""
+    if c.status == "D":
+        return "  (file deleted)"
+    raw = _get_file_diff(repo, c.path)
+    if not raw or b"\0" in raw[:8000]:
+        return ""
+    text = raw.decode("utf-8", "replace")
+    body = text[text.find("@@"):] if "@@" in text else text
+    return "  diff:\n" + "\n".join("    " + ln for ln in _clip(body, limit).splitlines())
 
 
 def plan_commits(
@@ -1421,11 +1475,16 @@ def plan_commits(
     if small:
         lines = []
         total = 0
+        budget = MAX_PROMPT_CHARS
         for c in small:
             lines.append(
                 f"- {c.path}  [{c.status}]  +{c.insertions}/-{c.deletions}  (total {c.total_lines} lines)"
             )
             total += c.total_lines
+            shown_diff = _diff_for_prompt(repo, c, min(1500, budget))
+            if shown_diff:
+                budget -= len(shown_diff)
+                lines.append(shown_diff)
         summary = "\n".join(lines)
 
         system = (
@@ -1435,8 +1494,7 @@ def plan_commits(
             f"- Prefer commits whose total changed lines (insertions + deletions) stay <= {MAX_LINES_PER_COMMIT}.\n"
             "- Group files that belong to the same functional change (feature, fix, refactor, docs, etc.).\n"
             "- Order commits so that earlier commits do not depend on later ones when possible.\n"
-            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
-            f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
+            f"{MESSAGE_RULE}"
             f"{NO_FILLER_RULE}"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, each with keys \"message\" (string) and \"files\" (list of strings).\n"
@@ -1470,7 +1528,7 @@ def plan_commits(
                 plans.append(CommitPlan(message=msg, files=clean))
         leftover = [c.path for c in small if c.path not in seen]
         if leftover:
-            plans.append(CommitPlan(message="chore: remaining small changes", files=leftover))
+            plans.append(CommitPlan(message="", files=leftover))  # named after its files by normalize_message()
 
     # ---- 2) Large files: the model only PLANS the split, the program does it ----
     # The model returns the order of the hunks and one commit message per hunk.
@@ -1505,8 +1563,7 @@ def plan_commits(
             "- Order the hunks so that each commit makes sense on its own and earlier commits "
             "do not depend on later ones; hunks of the same logical change should be adjacent.\n"
             "- Hunks may be applied in any order; the program handles shifted line numbers.\n"
-            "- Commit messages: imperative mood, concise subject (<=72 chars), optional body; "
-            f"the whole message must be concise but between {MIN_MESSAGE_WORDS} and {MAX_MESSAGE_WORDS} words long.\n"
+            f"{MESSAGE_RULE}"
             f"{NO_FILLER_RULE}"
             f"{archive_note}"
             "- Output ONLY valid JSON: a list of objects, one per hunk, with keys:\n"
