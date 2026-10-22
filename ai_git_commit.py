@@ -199,10 +199,20 @@ def branch_descriptions(repo: Path) -> dict[str, str]:
     prefix = f"refs/tags/{TAG_PREFIX}"
     for line in r.stdout.splitlines():
         ref, _, subject = line.partition("\t")
-        subject = clean_subject(subject)  # also fixes tags created by older versions
+        subject = clean_subject(strip_markup(subject))  # also fixes tags created by older versions
         if ref.startswith(prefix) and subject:
             out[ref[len(prefix):]] = subject
     return out
+
+
+ANSI_RESET = "\033[0m"
+ANSI_GRAY = "\033[37m"          # light white = gray
+ANSI_LIGHT_GREEN = "\033[92m"   # bright green
+
+
+def use_color() -> bool:
+    """Colorize only when writing to a terminal and NO_COLOR is not set."""
+    return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
 def list_branches(repo: Path) -> None:
@@ -217,9 +227,17 @@ def list_branches(repo: Path) -> None:
     desc = branch_descriptions(repo)
     lines = r.stdout.rstrip("\n").splitlines()
     width = max((len(ln) for ln in lines if ln[2:] in desc), default=0)
+    color = use_color()
     for ln in lines:
         text = desc.get(ln[2:])  # only plain local branch lines match
-        print(f"{ln.ljust(width)}  {text}" if text else ln)
+        name = ln.ljust(width) if text else ln  # pad BEFORE adding escape codes
+        if color and ln.startswith("* "):  # the checked-out branch
+            name = f"{ANSI_LIGHT_GREEN}{name}{ANSI_RESET}"
+        if text:
+            text = f"{ANSI_GRAY}{text}{ANSI_RESET}" if color else text
+            print(f"{name}  {text}")
+        else:
+            print(name)
 
 
 def current_branch(repo: Path) -> str:
@@ -287,14 +305,17 @@ def summarize_progress(
         "on the document changes provided (use nothing else). The document is only your "
         "source of information about WHAT CHANGED IN THE PROJECT: describe those project "
         f"changes themselves and NEVER mention the document ('{doc}'), a conversation, "
-        "requests, users, assistants or the fact that a document/log was updated.\n"
+        "requests, users, assistants or the fact that a document/log was updated. "
+        "Use ASDSTE-100 style for answers.\n"
         "Output PLAIN TEXT only, in this layout:\n"
         f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
         "(between 40 and 60) naming the concrete changes and features of this version; "
         "no 'Subject:' or other label, no markdown;\n"
         "2. a blank line;\n"
         f"3. optionally a body with further details (at most {MAX_DESCRIPTION_WORDS - SHORT_DESCRIPTION_WORDS * 2} words).\n"
-        "No markdown headings, no code fences."
+        "The whole answer must be PLAIN TEXT: no markup of any kind (no markdown, no "
+        "asterisks, backticks, underscores for emphasis, headings, bullet points, numbered "
+        "lists, links or code fences) – just sentences."
     )
     user = "\n\n".join(parts)
     text = normalize_description(call_llm(base_url, model, system, user, api_key, max_tokens=1024))
@@ -338,6 +359,28 @@ def read_head_file_at(repo: Path, ref: str, path: str) -> bytes:
     return r.stdout if r.returncode == 0 else b""
 
 
+def strip_markup(text: str) -> str:
+    """Convert Markdown to plain text: no emphasis, code, headings, list
+    markers, quotes, rules, links or images (their text is kept)."""
+    out: list[str] = []
+    for line in text.splitlines():
+        if re.match(r"^\s*(```|~~~)", line) or re.match(r"^\s*([-*_])(\s*\1){2,}\s*$", line):
+            continue  # code fences, horizontal rules
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)                 # headings
+        line = re.sub(r"^\s*>+\s?", "", line)                         # quotes
+        line = re.sub(r"^\s*(?:[-*+•]|\d+[.)])\s+", "", line)          # list markers
+        line = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", line)        # links / images
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)                   # bold
+        line = re.sub(r"(?<!\w)__(?!\s)(.+?)(?<!\s)__(?!\w)", r"\1", line)  # __bold__
+        line = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", line)  # *italic*
+        line = re.sub(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)", r"\1", line)           # _italic_
+        line = re.sub(r"~~(.+?)~~", r"\1", line)                       # strikethrough
+        line = re.sub(r"`+([^`]*)`+", r"\1", line)                     # inline code
+        line = re.sub(r"^\s*(?:subject|title)\s*:\s*", "", line, flags=re.IGNORECASE)
+        out.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
 def clean_subject(line: str) -> str:
     """Drop markdown emphasis and a leading 'Subject:' / 'Title:' label.
 
@@ -355,7 +398,7 @@ def normalize_description(text: str) -> str:
     into ONE line without label/markdown, cut to MAX_SHORT_DESCRIPTION_WORDS;
     the whole text is cut to MAX_DESCRIPTION_WORDS words.
     """
-    text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip())
+    text = strip_markup(text)
     head, sep, body = text.partition("\n\n")
     if not sep:  # no blank line: first line is the short description
         head, _, body = text.partition("\n")
