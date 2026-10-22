@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import requests
-from tqdm import tqdm
 
 MAX_LINES_PER_COMMIT = 200
 # Never sync or commit Python bytecode caches.
@@ -590,14 +589,12 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
             "*.pyc",
             "--exclude",
             "*.pyo",
-            "--info=progress2",
             f"{src}/",
             f"{repo}/",
         ]
-        # rsync --info=progress2 writes live progress to stderr
         subprocess.run(cmd, check=True)
     else:
-        # Fallback: walk and copy with a progress bar, then remove extras
+        # Fallback: walk and copy, then remove extras
         file_list: list[tuple[Path, Path]] = []
         for root, dirs, files in os.walk(src):
             rel = Path(root).relative_to(src)
@@ -608,9 +605,7 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
                     continue
                 file_list.append((Path(root) / f, dest_dir / f))
 
-        for src_file, dest_file in tqdm(
-            file_list, desc="Copying files", unit="file", leave=True
-        ):
+        for src_file, dest_file in file_list:
             dest_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_file, dest_file)
 
@@ -626,7 +621,7 @@ def sync_source_to_repo(src: Path, repo: Path) -> None:
                 if not (src_dir / f).exists():
                     to_remove.append(Path(root) / f)
         # (bytecode caches are never in the file list, so they are removed above)
-        for p in tqdm(to_remove, desc="Removing obsolete", unit="file", leave=False):
+        for p in to_remove:
             p.unlink()
 
 
@@ -1411,12 +1406,10 @@ def apply_commits(
 
     made = 0
     try:
-        for i, plan in enumerate(
-            tqdm(plans, desc="Creating commits", unit="commit", leave=True), start=1
-        ):
-            tqdm.write(f"\n=== Commit {i}/{len(plans)} ===")
-            tqdm.write(f"Message: {plan.message}")
-            tqdm.write(f"Files: {', '.join(plan.files)}")
+        for i, plan in enumerate(plans, start=1):
+            print(f"\n=== Commit {i}/{len(plans)} ===")
+            print(f"Message: {plan.message}")
+            print(f"Files: {', '.join(plan.files)}")
 
             if plan.hunks:
                 for path, idxs in plan.hunks.items():
@@ -1430,7 +1423,7 @@ def apply_commits(
                         # 2) change exactly one hunk
                         current = apply_hunk(current, h, st["applied"])
                         st["applied"].append(h)
-                        tqdm.write(f"  hunk {idx} of {path}: {h.header} (+/-{h.change_lines})")
+                        print(f"  hunk {idx} of {path}: {h.header} (+/-{h.change_lines})")
                     if len(st["applied"]) == len(st["hunks"]) and current != final:
                         raise HunkError(
                             f"{path}: after the last hunk the file differs from the synced source"
@@ -1451,7 +1444,7 @@ def apply_commits(
 
             staged = run_git(repo, "diff", "--cached", "--name-only")
             if not staged.stdout.strip():
-                tqdm.write("  (nothing staged – skipping)")
+                print("  (nothing staged – skipping)")
                 continue
 
             # Commit date = mtime of the source files (kept from before any rewrite)
@@ -1462,9 +1455,9 @@ def apply_commits(
                 date_str = _format_git_date(mtime_c)
                 env["GIT_AUTHOR_DATE"] = date_str
                 env["GIT_COMMITTER_DATE"] = date_str
-                tqdm.write(f"  date: {date_str} (from source file mtime)")
+                print(f"  date: {date_str} (from source file mtime)")
             else:
-                tqdm.write("  date: (current time – no surviving files for mtime)")
+                print("  date: (current time – no surviving files for mtime)")
 
             # 3) commit
             r = subprocess.run(
@@ -1477,11 +1470,11 @@ def apply_commits(
                     f"{(r.stderr or r.stdout).strip()}"
                 )
             made += 1
-            tqdm.write("  committed.")
+            print("  committed.")
         # 4) the loop repeats until every planned hunk is committed
     except (Exception, KeyboardInterrupt) as exc:
-        tqdm.write(f"\nERROR in commit {made + 1}/{len(plans)}: {exc}")
-        tqdm.write(f"Reverting the {made} commit(s) created by this run …")
+        print(f"\nERROR in commit {made + 1}/{len(plans)}: {exc}")
+        print(f"Reverting the {made} commit(s) created by this run …")
         _rollback(repo, start_head, snapshot)
         where = f"HEAD is back at {start_head[:12]}" if start_head else "the repository is empty again"
         raise SystemExit(
@@ -1620,60 +1613,61 @@ def main() -> None:
             "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
             "or export/recreate archives from existing branches.\n"
             "\n"
-            "Four modes (only --git is always required):\n"
+            "Four modes (--repo defaults to ./repository):\n"
             "\n"
             "  LIST    – print all branches like 'git branch --all' (the default\n"
             "            when neither --add nor --export is given)\n"
-            "            requires: --git\n"
+            "            requires: nothing (--repo defaults to ./repository)\n"
             "\n"
             "  REVERT  – remove the last branch from the repository\n"
-            "            requires: --git --revert (not with --add / --export / --list)\n"
+            "            requires: --revert (not with --add / --export / --list)\n"
             "\n"
-            "  IMPORT  – sync --add into --git and create commits (needs LLM)\n"
-            "            requires: --git --url --add --name\n"
+            "  IMPORT  – sync --add into --repo and create commits (needs LLM)\n"
+            "            requires: --url --add --name\n"
             "            optional: --model (default: first/active model from GET /v1/models)\n"
             "\n"
             "  EXPORT  – recreate a zip/tar from a branch\n"
-            "            requires: --git --export [NAME]\n"
+            "            requires: --export [NAME]\n"
             "            does NOT need --url, --model, --add, or --name"
         ),
         epilog=(
             "examples:\n"
             "  # Import an archive (creates branch from archive name)\n"
-            "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
+            "  %(prog)s --repo ./repo --url http://localhost:8080/v1 \\\n"
             "      --add snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
             "\n"
             "  # Import with an explicit model\n"
-            "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
+            "  %(prog)s --repo ./repo --url http://localhost:8080/v1 \\\n"
             "      --model qwen2.5-coder --add snapshot-2020.zip \\\n"
             "      --name 'Botter <ai@localhost>'\n"
             "\n"
             "  # Export the last imported archive (newest branch tip)\n"
-            "  %(prog)s --git ./repo --export\n"
+            "  %(prog)s --repo ./repo --export\n"
             "\n"
             "  # Export a specific branch / archive name\n"
-            "  %(prog)s --git ./repo --export 013-llm-errors\n"
-            "  %(prog)s --git ./repo --export 013-llm-errors.zip \\\n"
+            "  %(prog)s --repo ./repo --export 013-llm-errors\n"
+            "  %(prog)s --repo ./repo --export 013-llm-errors.zip \\\n"
             "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
             "\n"
-            "  # List all branches (like 'git branch --all'); needs only --git\n"
-            "  %(prog)s --git ./repo --list\n"
-            "  %(prog)s --git ./repo          # same: --list is the default\n"
+            "  # List all branches (like 'git branch --all'); needs no other option\n"
+            "  %(prog)s --repo ./repo --list\n"
+            "  %(prog)s --repo ./repo          # same: --list is the default\n"
             "                                 # when neither --add nor --export is given\n"
             "\n"
             "  # Remove the last branch again (e.g. after a bad import)\n"
-            "  %(prog)s --git ./repo --revert\n"
+            "  %(prog)s --repo ./repo --revert\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
-            "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
+            "  %(prog)s --repo ./repo --export 013-llm-errors --no-strip\n"
         ),
     )
     # --- always ---
     parser.add_argument(
-        "--git",
-        required=True,
+        "--repo",
         type=Path,
-        help="Path to the local Git repository (created on import if missing)",
+        default=Path("repository"),
+        help="Path to the local Git repository (created on import if missing; "
+        "default: ./repository)",
     )
     # --- import mode ---
     import_opts = parser.add_argument_group(
@@ -1726,7 +1720,7 @@ def main() -> None:
     )
     # --- export mode ---
     list_opts = parser.add_argument_group(
-        "list mode (needs only --git; the default when neither --add nor --export is given)"
+        "list mode (needs no other option; the default when neither --add nor --export is given)"
     )
     list_opts.add_argument(
         "--list",
@@ -1736,7 +1730,7 @@ def main() -> None:
         "given.  (No branch listing is shown after an import or export.)",
     )
     revert_opts = parser.add_argument_group(
-        "revert mode (needs only --git; cannot be combined with --add / --export)"
+        "revert mode (needs no other option; cannot be combined with --add / --export)"
     )
     revert_opts.add_argument(
         "--revert",
@@ -1814,7 +1808,7 @@ def main() -> None:
     # ----- revert mode -----
     if args.revert:
         note_ignored("reverting the last branch")
-        revert_last_branch(args.git)
+        revert_last_branch(args.repo)
         return
 
     # ----- list mode -----
@@ -1822,18 +1816,18 @@ def main() -> None:
         if args.export is not None or args.add is not None:
             parser.error("--list cannot be combined with --export or --add")
         note_ignored("listing branches")
-        require_git_repo(args.git)
-        list_branches(args.git)
+        require_git_repo(args.repo)
+        list_branches(args.repo)
         return
 
     # ----- export mode -----
     if args.export is not None:
-        require_git_repo(args.git)  # validate without auto-creating
+        require_git_repo(args.repo)  # validate without auto-creating
         branch = resolve_export_branch(
-            args.git, None if args.export == "__LAST__" else args.export
+            args.repo, None if args.export == "__LAST__" else args.export
         )
         export_archive(
-            args.git,
+            args.repo,
             branch,
             output=args.export_output,
             fmt=args.export_format,
@@ -1841,7 +1835,7 @@ def main() -> None:
         )
         return
 
-    ensure_git_repo(args.git)
+    ensure_git_repo(args.repo)
 
     # ----- import mode -----
     missing = [
@@ -1866,9 +1860,9 @@ def main() -> None:
     _src_path = args.add.expanduser().resolve()
     if args.branch is None and is_archive(_src_path):
         _derived = branch_name_from_archive(_src_path)
-        if branch_exists(args.git, _derived):
+        if branch_exists(args.repo, _derived):
             raise SystemExit(
-                f"Error: branch '{_derived}' already exists in {args.git} – "
+                f"Error: branch '{_derived}' already exists in {args.repo} – "
                 f"refusing to import archive '{_src_path.name}' again.\n"
                 "Rename the archive, or pass --branch NAME to add it to an "
                 "existing branch on purpose.\n"
@@ -1881,7 +1875,7 @@ def main() -> None:
     author_name, author_email = parse_author(args.name)
 
     # Optional: refuse if there are already staged changes
-    staged = run_git(args.git, "diff", "--cached", "--name-only")
+    staged = run_git(args.repo, "diff", "--cached", "--name-only")
     if staged.stdout.strip():
         raise SystemExit(
             "Repository has staged changes. Please commit or unstage them first."
@@ -1897,14 +1891,14 @@ def main() -> None:
         branch = branch_name_from_archive(args.add)
         print(f"Archive detected – using branch name '{branch}' (override with --branch)")
     created_branch = False
-    previous_ref = checked_out_ref(args.git)
+    previous_ref = checked_out_ref(args.repo)
     if branch:
-        created_branch = ensure_branch(args.git, branch)
+        created_branch = ensure_branch(args.repo, branch)
 
     # Safety: the sync step runs "rsync --delete" into the repo, so a source
     # (archive or directory) located inside the repo would be deleted by it.
     _src_abs = args.add.expanduser().resolve()
-    _repo_abs = args.git.expanduser().resolve()
+    _repo_abs = args.repo.expanduser().resolve()
     if _src_abs == _repo_abs or _repo_abs in _src_abs.parents:
         raise SystemExit(
             f"Source {_src_abs} is inside the target repository {_repo_abs}; "
@@ -1923,21 +1917,21 @@ def main() -> None:
             # Warn & abort if the (plain) source tree has extra directory layers
             # relative to the repository.  Archives are already stripped by
             # resolve_source, so this mainly protects directory inputs.
-            warning = detect_extra_directory_layer(effective_src, args.git)
+            warning = detect_extra_directory_layer(effective_src, args.repo)
             if warning:
                 print("\n*** Extra directory layer detected ***\n")
                 print(warning)
                 raise SystemExit(1)
 
-            print(f"Syncing {effective_src} → {args.git} …")
+            print(f"Syncing {effective_src} → {args.repo} …")
             if not args.dry_run:
-                sync_source_to_repo(effective_src, args.git)
+                sync_source_to_repo(effective_src, args.repo)
                 synced = True
             else:
                 print("  (dry-run: skip actual file sync)")
 
             print("Collecting changes …")
-            changes = collect_changes(args.git)
+            changes = collect_changes(args.repo)
             if not changes:
                 print("No changes detected. Nothing to commit.")
                 return
@@ -1952,7 +1946,7 @@ def main() -> None:
             if args.mention_archive and is_archive(src_path):
                 archive_label = src_path.name  # keep full name including extension
             plans = plan_commits(
-                changes, args.git, args.url, args.model, args.api_key,
+                changes, args.repo, args.url, args.model, args.api_key,
                 archive_name=archive_label,
             )
 
@@ -1979,19 +1973,19 @@ def main() -> None:
                 print("\nDry-run finished. No commits were created.")
                 return
 
-            apply_commits(args.git, plans, author_name, author_email)
+            apply_commits(args.repo, plans, author_name, author_email)
             print("\nDone.")
             committed = True
     finally:
         # A branch created for this import must not survive without commits
         # (failure and rollback, dry-run, "no changes", empty plan).
         if created_branch and not committed:
-            discard_created_branch(args.git, branch, previous_ref, synced)
+            discard_created_branch(args.repo, branch, previous_ref, synced)
 
     # Only the name of the branch the commits went to; printed after the
     # temporary-directory cleanup so it really is the last line of output.
     if committed:
-        last = current_branch(args.git)
+        last = current_branch(args.repo)
         if last:
             print(last)
 
