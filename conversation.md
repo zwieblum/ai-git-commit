@@ -218,3 +218,23 @@ add the --cleanup without confirmation
 **Assistant:**
 
 New `--cleanup` mode (`cleanup_repository()`): counts unreachable commits/objects (`git fsck --unreachable --no-reflogs`), runs `git reflog expire --expire=now --all` and `git gc --prune=now -q` without any confirmation, and prints the number removed plus the repository size before/after. Needs only `--repo` (default `./repository`), never creates the repository, cannot be combined with `--add`/`--export`/`--revert`/`--list`; import-only options are ignored with a note. README (new "Cleanup mode", argument table) and `--help` updated. Tested: after `--revert` the deleted commit exists until `--cleanup` and is gone afterwards, branches intact, size shrinks; error cases and missing repo.
+
+---
+
+**User:**
+
+is there an option to add a long description to a git branch?
+
+**Assistant:**
+
+Yes: `git branch --edit-description` / `git config branch.<name>.description` (local config only, not shown by `git branch`, not pushed). Alternatives: annotated tag, committed notes file. Offered `--describe`.
+
+---
+
+**User:**
+
+when "conversation.md" (prioritized) or something similar (README ...) is present, then create a short summary of the differences/progression from the last version to the current version as the description as an annotated tag on the branch tip. also add "--describe TEXT" to override this.
+
+**Assistant:**
+
+After a successful import the branch tip gets an annotated tag `desc/<branch>`. Message: `--describe TEXT` if given; otherwise, if the repository root holds `conversation.*` (first), `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*` or `NOTES*`, a model-written summary (subject + body, ≤120 words) of the progression since the previous tip, built from the diff of that document (full text if new/unchanged) plus commit messages and file stat. No document and no `--describe` → no tag. Tag names are namespaced (`desc/…`) so they never clash with branch names; re-import into the same branch replaces the tag; failures only warn; `--dry-run` creates nothing. `--revert` now deletes the branch's tag too (it would keep the commits reachable). I read your option as `--describe`. Tested with a mock model: conversation.md diff reaches the prompt, README fallback, override without model call, no-doc case, dry-run, revert removing the tag. README updated.
