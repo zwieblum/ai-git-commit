@@ -301,8 +301,9 @@ Rules enforced in the prompt (and cleaned up in code):
 
 - Prefer commits whose total changed lines ≤ 200.
 - Group by functional coherence.
-- Commit messages are concise but between 10 and 100 words long (enforced in code: overlong messages are truncated, too-short ones are extended with the affected file names, without filler text).
-- The prompts forbid filler and justification clauses (e.g. "to keep the codebase current and consistent") in commit messages and branch descriptions.
+- Commit messages state clearly and concisely what changed: one short subject line, an optional body, at most 40 words in total. The model receives the (clipped) diff of every small changed file, so it can name the concrete change.
+- Filler is never allowed. The prompts forbid purpose and justification text, and `strip_filler()` removes it in code from every message: clauses such as "to keep the codebase current and consistent", "to improve readability", "with the latest source changes", and sentences such as "This keeps everything consistent." A clause is removed only if it contains a filler word, so "add check to ensure the port is free" is kept.
+- Messages are never padded. If nothing is left after cleaning (or the model omits a message), the message is just `Update <files>`.
 - Every changed path appears in exactly one commit.
 - Leftover paths (if the model omits any) are placed in a final catch-all commit.
 
