@@ -300,7 +300,11 @@ no model involvement):
 **If any commit fails, all commits made by this run are reverted:** HEAD is
 reset to where it was before the first commit and the synced files are put
 back in the working tree (uncommitted); the program then exits with an error.
-(A branch created for the import is kept; see "Existing branch check".)
+A branch that this run created for the import is **deleted** again (the
+previously checked-out branch is checked out and the synced files are removed
+from the working tree). The same happens when an import ends without any commit
+(error before committing, `--dry-run`, "no changes"). Branches that already
+existed (`--branch NAME`) are never deleted.
 
 For every planned commit (small files / deletions are staged whole):
 
