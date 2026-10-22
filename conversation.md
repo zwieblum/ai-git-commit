@@ -328,3 +328,13 @@ when adding comments: never use phrases and fillers like "to keep the codebase c
 **Assistant:**
 
 "Comments" here are the commit messages and branch descriptions written by `ai_git_commit.py`. The padding in `normalize_message()` no longer appends "to keep the codebase current and consistent" or "with the latest source changes"; too-short messages are extended with `: update <files>` and, if still short, `; files: <all files>`. A shared `NO_FILLER_RULE` is now part of the file-level prompt, the hunk-level prompt and the branch-description prompt, forbidding purpose and justification clauses such as "to improve maintainability". README updated.
+
+---
+
+**User:**
+
+never allow commit comments like "update conversation.md to keep the codebase current and consistent". it must always state clearly what has changed in a very concise way
+
+**Assistant:**
+
+Prompts alone were not enough, so the rule is now enforced in code and the model gets the facts it needs. `strip_filler()` runs on every commit message and removes purpose/justification clauses ("to keep the codebase current and consistent", "to improve readability", "with the latest source changes") and sentences such as "This keeps everything consistent."; a clause is removed only if it contains a filler word. Messages are no longer padded to a minimum length: the 10-word minimum is gone and the maximum is 40 words (one short subject line, optional body). Cause of the vague messages: for small files the model only saw paths and line counts, so it could not say what changed; the planning prompt now includes each file's clipped diff and tells the model to name the concrete change and never write only "update <file>". If nothing is left after cleaning, the message is `Update <files>`. Tested with a mock model that returns the exact filler message: it is reduced to the facts, and the diff and rules appear in the prompt. README updated.
