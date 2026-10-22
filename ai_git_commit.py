@@ -191,6 +191,54 @@ def current_branch(repo: Path) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def revert_last_branch(repo: Path) -> None:
+    """Remove the last branch (see ``latest_release_branch``) from *repo*.
+
+    * Refuses to remove the only remaining branch.
+    * Refuses when the working tree has uncommitted/untracked changes.
+    * If the branch is checked out, the previous branch is checked out first.
+    * Prints the tip commit so the branch can be restored with
+      ``git branch NAME SHA``.
+    """
+    require_git_repo(repo)
+    branches = list_local_branches(repo)
+    if not branches:
+        raise SystemExit("No local branches found – nothing to revert.")
+    if len(branches) == 1:
+        raise SystemExit(
+            f"Only one branch ('{branches[0]}') exists – refusing to remove it."
+        )
+    last = latest_release_branch(repo)
+    if not last:
+        raise SystemExit("Could not determine the last branch.")
+
+    if run_git(repo, "status", "--porcelain", check=False).stdout.strip():
+        raise SystemExit(
+            f"Working tree of {repo} has uncommitted or untracked changes "
+            f"(e.g. from a failed import) – refusing to switch branches.\n"
+            f"Discard them first if you are sure:\n"
+            f"  git -C {repo} reset --hard && git -C {repo} clean -fd"
+        )
+
+    sha = run_git(repo, "rev-parse", f"refs/heads/{last}").stdout.strip()
+    now_on = current_branch(repo)
+    if now_on == last:
+        fallback = latest_release_branch(repo, exclude=last)
+        r = run_git(repo, "checkout", "--quiet", fallback, check=False)
+        if r.returncode != 0:
+            raise SystemExit(
+                f"Could not switch to '{fallback}' before removing '{last}':\n"
+                f"{r.stderr.strip()}"
+            )
+        now_on = fallback
+    r = run_git(repo, "branch", "-D", last, check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"Could not remove branch '{last}':\n{r.stderr.strip()}")
+
+    print(f"Removed branch '{last}' (was {sha[:12]}); now on '{now_on}'.")
+    print(f"Restore with: git -C {repo} branch {last} {sha}")
+
+
 def ensure_git_repo(repo: Path) -> None:
     """Ensure *repo* is a Git working tree. Create the directory and run
     ``git init`` if it does not exist or is not yet a repository."""
@@ -212,18 +260,22 @@ def ensure_git_repo(repo: Path) -> None:
         print(f"  initialized empty Git repository in {repo}")
 
 
-def latest_release_branch(repo: Path) -> str | None:
+def latest_release_branch(repo: Path, exclude: str | None = None) -> str | None:
     """Return the branch holding the most recent release.
 
     Release branches are named like ``017-export-model`` (derived from archive
     names).  The highest leading number wins; if no branch has a numeric
     prefix, the branch whose tip has the newest committer date is used.
+    *exclude* leaves one branch out of the choice.
     """
     r = run_git(
         repo, "for-each-ref", "--sort=-committerdate",
         "--format=%(refname:short)", "refs/heads/", check=False,
     )
-    ordered = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    ordered = [
+        ln.strip() for ln in r.stdout.splitlines()
+        if ln.strip() and ln.strip() != exclude
+    ]
     if not ordered:
         return None
     numbered = []
@@ -1500,11 +1552,14 @@ def main() -> None:
             "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
             "or export/recreate archives from existing branches.\n"
             "\n"
-            "Three modes (only --git is always required):\n"
+            "Four modes (only --git is always required):\n"
             "\n"
             "  LIST    – print all branches like 'git branch --all' (the default\n"
             "            when neither --add nor --export is given)\n"
             "            requires: --git\n"
+            "\n"
+            "  REVERT  – remove the last branch from the repository\n"
+            "            requires: --git --revert (not with --add / --export / --list)\n"
             "\n"
             "  IMPORT  – sync --add into --git and create commits (needs LLM)\n"
             "            requires: --git --url --add --name\n"
@@ -1537,6 +1592,9 @@ def main() -> None:
             "  %(prog)s --git ./repo --list\n"
             "  %(prog)s --git ./repo          # same: --list is the default\n"
             "                                 # when neither --add nor --export is given\n"
+            "\n"
+            "  # Remove the last branch again (e.g. after a bad import)\n"
+            "  %(prog)s --git ./repo --revert\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
             "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
@@ -1609,6 +1667,17 @@ def main() -> None:
         "and exit.  This is the default when neither --add nor --export is "
         "given.  (No branch listing is shown after an import or export.)",
     )
+    revert_opts = parser.add_argument_group(
+        "revert mode (needs only --git; cannot be combined with --add / --export)"
+    )
+    revert_opts.add_argument(
+        "--revert",
+        action="store_true",
+        help="Remove the last branch from the repository (the one holding the "
+        "most recent import: highest numeric prefix, else newest tip).  If it "
+        "is checked out, the previous branch is checked out first.  Refuses "
+        "to remove the only branch or to run with uncommitted changes.",
+    )
     export_opts = parser.add_argument_group(
         "export mode (does not need --url / --model / --add / --name)"
     )
@@ -1645,19 +1714,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Neither --export nor --add given → list mode is the default
-    if args.export is None and args.add is None:
+    if args.revert:
+        if args.export is not None or args.add is not None or args.list:
+            parser.error("--revert cannot be combined with --add, --export or --list")
+    elif args.export is None and args.add is None:
+        # Neither --export nor --add given → list mode is the default
         args.list = True
 
-    if args.strip is not None and args.export is None:
-        parser.error("--strip / --no-strip can only be used together with --export")
-    if args.strip is None:
-        args.strip = True  # default: files at the archive root
-
-    # ----- list mode -----
-    if args.list:
-        if args.export is not None or args.add is not None:
-            parser.error("--list cannot be combined with --export or --add")
+    def note_ignored(action: str) -> None:
         ignored = [
             flag
             for flag, dest in (
@@ -1669,10 +1733,27 @@ def main() -> None:
         ]
         if ignored:
             print(
-                f"Note: {', '.join(ignored)} ignored – listing branches "
+                f"Note: {', '.join(ignored)} ignored – {action} "
                 "(use --add ARCHIVE_OR_DIR to import).",
                 file=sys.stderr,
             )
+
+    if args.strip is not None and args.export is None:
+        parser.error("--strip / --no-strip can only be used together with --export")
+    if args.strip is None:
+        args.strip = True  # default: files at the archive root
+
+    # ----- revert mode -----
+    if args.revert:
+        note_ignored("reverting the last branch")
+        revert_last_branch(args.git)
+        return
+
+    # ----- list mode -----
+    if args.list:
+        if args.export is not None or args.add is not None:
+            parser.error("--list cannot be combined with --export or --add")
+        note_ignored("listing branches")
         require_git_repo(args.git)
         list_branches(args.git)
         return
