@@ -362,3 +362,25 @@ for github compatibility:
 **Assistant:**
 
 After a successful import, `ensure_github_main()` removes any existing local `main` branch and recreates it at the tip commit of the release branch that received the commits. HEAD stays on the numbered release branch; `main` is only a pointer for GitHub's default-branch expectation. `latest_release_branch()` ignores `main` so it is never treated as a release. README branch feature description updated.
+
+---
+
+**User:**
+
+Add a functionality that it never commits backup files (*~,*.BAK, ...)
+change the discription of the branch: make it a summary of changes in the README. If README is not present, then summarize the changes in cinversation. never mention README or conversation in these comments.
+
+**Assistant:**
+
+Backup-file ignore was already present from the previous revision. Branch descriptions now prefer README over conversation (DESCRIPTION_DOC_STEMS order: readme, conversation, …). The description prompt and post-filters forbid naming README, conversation, or any document; only the project changes themselves appear in the tag text.
+
+---
+
+**User:**
+
+After pushing to github I get this when listing. how can I get rid of the "remote/..." branches?
+[output showing remotes/origin/… lines from --list]
+
+**Assistant:**
+
+`--list` now runs `git branch` (local only) instead of `git branch --all`, so remote-tracking refs such as `remotes/origin/…` no longer appear. To prune stale remote-tracking refs from the repo itself (optional, independent of the tool), use `git remote prune origin` or `git fetch --prune`. README list-mode wording updated.
