@@ -318,3 +318,13 @@ Generated descriptions are now converted to plain text by `strip_markup()`: code
 **Assistant:**
 
 `--list` now prints each branch description in gray (`\033[90m`) and the checked-out branch line in light green (`\033[92m`). Padding is applied before the escape codes so the columns stay aligned. Colors are used only when stdout is a terminal and `NO_COLOR` is unset, so piped output stays plain. README updated.
+
+---
+
+**User:**
+
+when adding comments: never use phrases and fillers like "to keep the codebase current and consistent". Read the archive, change it so that when adding comments it must never use empty phrases and fillers like that.
+
+**Assistant:**
+
+"Comments" here are the commit messages and branch descriptions written by `ai_git_commit.py`. The padding in `normalize_message()` no longer appends "to keep the codebase current and consistent" or "with the latest source changes"; too-short messages are extended with `: update <files>` and, if still short, `; files: <all files>`. A shared `NO_FILLER_RULE` is now part of the file-level prompt, the hunk-level prompt and the branch-description prompt, forbidding purpose and justification clauses such as "to improve maintainability". README updated.
