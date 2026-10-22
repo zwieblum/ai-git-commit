@@ -188,15 +188,36 @@ def require_git_repo(repo: Path) -> None:
         raise SystemExit(f"Not a valid Git working tree: {repo}")
 
 
+def branch_descriptions(repo: Path) -> dict[str, str]:
+    """Map branch name → subject line of its ``desc/<branch>`` annotated tag."""
+    r = run_git(
+        repo, "for-each-ref", f"refs/tags/{TAG_PREFIX}",
+        "--format=%(refname)%09%(contents:subject)", check=False,
+    )
+    out: dict[str, str] = {}
+    prefix = f"refs/tags/{TAG_PREFIX}"
+    for line in r.stdout.splitlines():
+        ref, _, subject = line.partition("\t")
+        if ref.startswith(prefix) and subject.strip():
+            out[ref[len(prefix):]] = subject.strip()
+    return out
+
+
 def list_branches(repo: Path) -> None:
-    """Print all branches exactly like ``git branch --all``."""
+    """Print all branches like ``git branch --all``, plus the short
+    description (subject of the ``desc/<branch>`` tag) of each local branch."""
     r = run_git(repo, "branch", "--all", "--no-color", check=False)
     if r.returncode != 0:
         raise SystemExit(f"Could not list branches: {r.stderr.strip()}")
-    if r.stdout.strip():
-        print(r.stdout.rstrip("\n"))
-    else:
+    if not r.stdout.strip():
         print("No branches found.")
+        return
+    desc = branch_descriptions(repo)
+    lines = r.stdout.rstrip("\n").splitlines()
+    width = max((len(ln) for ln in lines if ln[2:] in desc), default=0)
+    for ln in lines:
+        text = desc.get(ln[2:])  # only plain local branch lines match
+        print(f"{ln.ljust(width)}  {text}" if text else ln)
 
 
 def current_branch(repo: Path) -> str:
