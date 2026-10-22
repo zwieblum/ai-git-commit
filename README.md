@@ -14,15 +14,15 @@ and chronologically ordered by the original file modification times.
 
 | Feature | Description |
 |--------|-------------|
-| **Source flexibility** | `--src` can be a plain directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, …). |
+| **Source flexibility** | `--add` can be a plain directory **or** an archive (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, …). |
 | **Archive handling** | Archives are extracted to a temporary directory; single leading directory layers are stripped automatically; the temp tree is removed afterwards. Optionally (`--mention-archive`) the archive filename can be included in every commit message (off by default). |
 | **Extra-layer guard** | If a plain directory nests content one or more levels deeper than the repository root (and names overlap), the program **warns and stops**. |
 | **Auto-init** | If `--git` does not exist or is not yet a repository, the directory is created and `git init` is run. |
 | **LLM commit messages** | An OpenAI-compatible `/v1/chat/completions` endpoint produces a JSON plan of functionally coherent commits. |
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
-| **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--src` / the archive). |
+| **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
 | **Progress feedback** | Progress bars (via `tqdm`) for file copy (fallback path) and for the commit-creation loop; `rsync --info=progress2` when rsync is used. |
-| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--src` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
+| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. |
 | **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: branch with the newest commit). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
 
@@ -80,20 +80,20 @@ chmod +x ai_git_commit.py   # optional
 
 ### Import mode
 
-Requires `--git`, `--url`, `--src`, and `--name`. `--model` is optional (defaults to the first/active model from `GET {url}/models`).
+Requires `--git`, `--url`, `--add`, and `--name`. `--model` is optional (defaults to the first/active model from `GET {url}/models`).
 
 ```bash
 python ai_git_commit.py \
   --git  /path/to/the/repository \
   --url  http://localhost:8080/v1 \
   --model qwen2.5-coder \
-  --src  /path/to/the/new/content_or_archive.zip \
+  --add  /path/to/the/new/content_or_archive.zip \
   --name "Botter <ai@localhost>"
 ```
 
 ### Export mode
 
-Requires only `--git` and `--export`. **Does not** need `--url`, `--model`, `--src`, or `--name`.
+Requires only `--git` and `--export`. **Does not** need `--url`, `--model`, `--add`, or `--name`.
 
 ```bash
 # Last archive (branch with the newest commit)
@@ -118,14 +118,16 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. When `--git` is the **only** option given, `--list` is assumed:
+Requires only `--git`. Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --git /path/to/repo --list
 python ai_git_commit.py --git /path/to/repo          # same thing
 ```
 
-`--list` cannot be combined with `--export` or `--src`, and it never creates the repository.
+Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignored in list mode; a note on stderr says so.
+
+`--list` cannot be combined with `--export` or `--add`, and it never creates the repository.
 
 ### Arguments
 
@@ -134,27 +136,27 @@ python ai_git_commit.py --git /path/to/repo          # same thing
 | `--git` | **yes** | **yes** | Path to the local Git repository (created on import if missing) |
 | `--url` | **yes** | no | OpenAI-compatible base URL, e.g. `http://localhost:8080/v1` |
 | `--model` | no | no | Model name (default: first/active model from `GET {url}/models`) |
-| `--src` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
+| `--add` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
 | `--name` | **yes** | no | Committer identity: `"Name <email@domain>"`; other forms are accepted too, see [Identity formats](#identity-formats) |
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
-| `--branch` | no | no | Branch to commit on (default: archive basename when `--src` is an archive) |
+| `--branch` | no | no | Branch to commit on (default: archive basename when `--add` is an archive) |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
 | `--dry-run` | no | no | Plan commits only; do not write |
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
-| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git` and is assumed when `--git` is the only option |
+| `--list` | no | no | List mode: print all branches like `git branch --all` and exit; needs only `--git`; this is the default when neither `--add` nor `--export` is given |
 | `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
 
 ```bash
 # oldest snapshot first
-python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2020.zip \
+python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2020.zip \
   --name "Botter <bot@localhost>"
-python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2021.tar.gz \
+python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2021.tar.gz \
   --name "Botter <bot@localhost>"
-python ai_git_commit.py --url … --model … --git ./proj --src snapshot-2022/ \
+python ai_git_commit.py --url … --model … --git ./proj --add snapshot-2022/ \
   --name "Botter <bot@localhost>"
 ```
 
@@ -169,7 +171,7 @@ resulting Git history is chronologically ordered.
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  --src      │────▶│ resolve_source() │────▶│ effective_src   │
+│  --add      │────▶│ resolve_source() │────▶│ effective_src   │
 │ (dir/arch)  │     │ extract + strip  │     │ (plain dir)     │
 └─────────────┘     └──────────────────┘     └────────┬────────┘
                                                       │
@@ -327,7 +329,7 @@ A new branch (derived from the archive name or `--branch`) is created from the *
 
 ### Existing branch check
 
-If `--src` is an archive and no `--branch` is given, the branch name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a local branch with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass `--branch NAME` explicitly if you really want to add the contents to an existing branch. If an earlier import of the archive failed before committing anything, delete the leftover branch (`git branch -D NAME`) and run again. Directory sources are not affected.
+If `--add` is an archive and no `--branch` is given, the branch name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a local branch with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass `--branch NAME` explicitly if you really want to add the contents to an existing branch. If an earlier import of the archive failed before committing anything, delete the leftover branch (`git branch -D NAME`) and run again. Directory sources are not affected.
 
 ### Identity formats
 

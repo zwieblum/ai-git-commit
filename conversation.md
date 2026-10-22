@@ -137,3 +137,14 @@ if only "--git" is given, then "--list" is assumed.
 **Assistant:**
 
 When `--git` is the only option on the command line (every other option still at its argparse default, so `--git repo` and `--git=repo` both count), `--list` is now assumed. Any additional option (`--dry-run`, `--export`, `--strip`, …) keeps the previous behaviour, e.g. `--git repo --dry-run` still reports the missing import options. A missing/non-repo path still gives the usual error. Tested all of these; README and `--help` updated.
+
+---
+
+**User:**
+
+--list: imply this as default, if neither --export nor --src is given.
+rename "--src" to "--add"
+
+**Assistant:**
+
+Renamed `--src` to `--add` everywhere (option, `args.add`, error/help texts, README); the old name is no longer accepted. List mode is now the default whenever neither `--export` nor `--add` is given (replacing the earlier "only `--git`" rule), so `--git repo --name …` or `--git repo --dry-run` also just lists; import-only options given in that case are ignored with a note on stderr (`Note: --name, --dry-run ignored – listing branches (use --add ARCHIVE_OR_DIR to import).`). `--list` together with `--add`/`--export` is still an error. Tested: import with `--add`, `--src` rejected, default list, ignored-options note, missing import options, export. `--add` shows `PATH` as metavar in `--help`.
