@@ -75,11 +75,25 @@ class FileChange:
 
 @dataclass
 class DiffHunk:
-    """One unified-diff hunk belonging to a single file."""
+    """One unified-diff hunk belonging to a single file.
+
+    ``old_lines`` / ``new_lines`` hold the exact bytes (with line endings) the
+    hunk removes/context-matches and inserts/context-keeps, so the program can
+    apply the hunk itself without ``git apply``.
+    """
     index: int
     header: str          # the @@ -a,b +c,d @@ line
-    body: str            # lines following the header (including the header line)
-    change_lines: int    # approximate insertions + deletions in this hunk
+    body: str            # the hunk text (including the header line), for display
+    change_lines: int    # insertions + deletions in this hunk
+    old_start: int = 0
+    old_count: int = 0
+    old_lines: list[bytes] = field(default_factory=list)
+    new_lines: list[bytes] = field(default_factory=list)
+
+    @property
+    def pos(self) -> int:
+        """0-based index in the ORIGINAL file where old_lines start."""
+        return self.old_start if self.old_count == 0 else self.old_start - 1
 
 
 @dataclass
