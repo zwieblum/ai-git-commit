@@ -309,8 +309,10 @@ def branch_exists(repo: Path, branch: str) -> bool:
     ).returncode == 0
 
 
-def ensure_branch(repo: Path, branch: str) -> None:
+def ensure_branch(repo: Path, branch: str) -> bool:
     """Checkout *branch*, creating it if it does not exist.
+
+    Returns True only if the branch was newly created by this call.
 
     - Existing branch → ``git checkout NAME``
     - New branch with existing commits → ``git checkout -b NAME``
@@ -327,13 +329,13 @@ def ensure_branch(repo: Path, branch: str) -> None:
     cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
     if cur.returncode == 0 and cur.stdout.strip() == branch:
         print(f"Already on branch '{branch}'")
-        return
+        return False
 
     # Does the branch already exist?
     if branch_exists(repo, branch):
         print(f"Checking out existing branch '{branch}' …")
         run_git(repo, "checkout", branch)
-        return
+        return False
 
     # Create and switch.  Base the new branch on the *latest release* branch
     # (not on whatever HEAD happens to be, which may be an old release).
@@ -351,6 +353,40 @@ def ensure_branch(repo: Path, branch: str) -> None:
         run_git(repo, "checkout", "-b", branch, check=False)
         # Some Git versions need: git symbolic-ref HEAD refs/heads/NAME
         run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}", check=False)
+    return True
+
+
+def checked_out_ref(repo: Path) -> str | None:
+    """Name of the checked-out branch (also for an unborn one), else the HEAD sha."""
+    r = run_git(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False)
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    r = run_git(repo, "rev-parse", "--verify", "-q", "HEAD", check=False)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def discard_created_branch(repo: Path, branch: str, previous: str | None, synced: bool) -> None:
+    """Remove a branch that this run created but that ended up without commits.
+
+    Goes back to the previously checked-out branch, removes the files the sync
+    wrote into the working tree (only when a sync really happened) and deletes
+    the branch.  Nothing is touched if the branch received commits.
+    """
+    try:
+        if has_commits(repo) and previous and previous != branch:
+            run_git(repo, "checkout", "-f" if synced else "-q", previous)
+        elif not has_commits(repo) and previous and previous != branch:
+            run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{previous}", check=False)
+        if synced:
+            run_git(repo, "clean", "-fdq", check=False)  # untracked synced files
+        if branch_exists(repo, branch) and current_branch(repo) != branch:
+            run_git(repo, "branch", "-D", branch)
+        print(f"Deleted branch '{branch}' created for this import"
+              + (f"; back on '{previous}'." if previous else "."))
+    except subprocess.CalledProcessError as exc:
+        print(f"warning: could not delete branch '{branch}': "
+              f"{(exc.stderr or '').strip()} – remove it with 'git branch -D {branch}'",
+              file=sys.stderr)
 
 
 ARCHIVE_SUFFIXES = (
@@ -1449,8 +1485,7 @@ def apply_commits(
         _rollback(repo, start_head, snapshot)
         where = f"HEAD is back at {start_head[:12]}" if start_head else "the repository is empty again"
         raise SystemExit(
-            f"Aborted: {exc}\nAll {made} commit(s) of this run were reverted; {where}, "
-            "the synced files are in the working tree (uncommitted)."
+            f"Aborted: {exc}\nAll {made} commit(s) of this run were reverted; {where}."
         )
 
 
@@ -1861,8 +1896,10 @@ def main() -> None:
     if branch is None and is_archive(args.add.expanduser().resolve()):
         branch = branch_name_from_archive(args.add)
         print(f"Archive detected – using branch name '{branch}' (override with --branch)")
+    created_branch = False
+    previous_ref = checked_out_ref(args.git)
     if branch:
-        ensure_branch(args.git, branch)
+        created_branch = ensure_branch(args.git, branch)
 
     # Safety: the sync step runs "rsync --delete" into the repo, so a source
     # (archive or directory) located inside the repo would be deleted by it.
@@ -1875,73 +1912,81 @@ def main() -> None:
         )
 
     committed = False
-    with resolve_source(args.add) as effective_src:
-        if not effective_src.is_dir():
-            raise SystemExit(
-                f"Internal error: resolved source is not a directory: {effective_src} "
-                f"(from --add {args.add}). Is this the current ai_git_commit.py?"
-            )
-        # Warn & abort if the (plain) source tree has extra directory layers
-        # relative to the repository.  Archives are already stripped by
-        # resolve_source, so this mainly protects directory inputs.
-        warning = detect_extra_directory_layer(effective_src, args.git)
-        if warning:
-            print("\n*** Extra directory layer detected ***\n")
-            print(warning)
-            raise SystemExit(1)
-
-        print(f"Syncing {effective_src} → {args.git} …")
-        if not args.dry_run:
-            sync_source_to_repo(effective_src, args.git)
-        else:
-            print("  (dry-run: skip actual file sync)")
-
-        print("Collecting changes …")
-        changes = collect_changes(args.git)
-        if not changes:
-            print("No changes detected. Nothing to commit.")
-            return
-
-        print(f"Found {len(changes)} changed path(s):")
-        for c in changes:
-            print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
-
-        print("\nAsking model for commit plan …")
-        archive_label = None
-        src_path = args.add.expanduser().resolve()
-        if args.mention_archive and is_archive(src_path):
-            archive_label = src_path.name  # keep full name including extension
-        plans = plan_commits(
-            changes, args.git, args.url, args.model, args.api_key,
-            archive_name=archive_label,
-        )
-
-        if not plans:
-            print("Model returned empty plan.")
-            return
-
-        print(f"\nPlanned {len(plans)} commit(s):")
-        for i, p in enumerate(plans, 1):
-            if p.hunks:
-                print(f"  {i}. {p.message}")
-                for f, idxs in p.hunks.items():
-                    print(f"       - {f}  (hunks {idxs})")
-            else:
-                line_sum = sum(
-                    next((c.total_lines for c in changes if c.path == f), 0)
-                    for f in p.files
+    synced = False
+    try:
+        with resolve_source(args.add) as effective_src:
+            if not effective_src.is_dir():
+                raise SystemExit(
+                    f"Internal error: resolved source is not a directory: {effective_src} "
+                    f"(from --add {args.add}). Is this the current ai_git_commit.py?"
                 )
-                print(f"  {i}. [{line_sum} lines] {p.message}")
-                for f in p.files:
-                    print(f"       - {f}")
+            # Warn & abort if the (plain) source tree has extra directory layers
+            # relative to the repository.  Archives are already stripped by
+            # resolve_source, so this mainly protects directory inputs.
+            warning = detect_extra_directory_layer(effective_src, args.git)
+            if warning:
+                print("\n*** Extra directory layer detected ***\n")
+                print(warning)
+                raise SystemExit(1)
 
-        if args.dry_run:
-            print("\nDry-run finished. No commits were created.")
-            return
+            print(f"Syncing {effective_src} → {args.git} …")
+            if not args.dry_run:
+                sync_source_to_repo(effective_src, args.git)
+                synced = True
+            else:
+                print("  (dry-run: skip actual file sync)")
 
-        apply_commits(args.git, plans, author_name, author_email)
-        print("\nDone.")
-        committed = True
+            print("Collecting changes …")
+            changes = collect_changes(args.git)
+            if not changes:
+                print("No changes detected. Nothing to commit.")
+                return
+
+            print(f"Found {len(changes)} changed path(s):")
+            for c in changes:
+                print(f"  {c.status} {c.path}  (+{c.insertions}/-{c.deletions})")
+
+            print("\nAsking model for commit plan …")
+            archive_label = None
+            src_path = args.add.expanduser().resolve()
+            if args.mention_archive and is_archive(src_path):
+                archive_label = src_path.name  # keep full name including extension
+            plans = plan_commits(
+                changes, args.git, args.url, args.model, args.api_key,
+                archive_name=archive_label,
+            )
+
+            if not plans:
+                print("Model returned empty plan.")
+                return
+
+            print(f"\nPlanned {len(plans)} commit(s):")
+            for i, p in enumerate(plans, 1):
+                if p.hunks:
+                    print(f"  {i}. {p.message}")
+                    for f, idxs in p.hunks.items():
+                        print(f"       - {f}  (hunks {idxs})")
+                else:
+                    line_sum = sum(
+                        next((c.total_lines for c in changes if c.path == f), 0)
+                        for f in p.files
+                    )
+                    print(f"  {i}. [{line_sum} lines] {p.message}")
+                    for f in p.files:
+                        print(f"       - {f}")
+
+            if args.dry_run:
+                print("\nDry-run finished. No commits were created.")
+                return
+
+            apply_commits(args.git, plans, author_name, author_email)
+            print("\nDone.")
+            committed = True
+    finally:
+        # A branch created for this import must not survive without commits
+        # (failure and rollback, dry-run, "no changes", empty plan).
+        if created_branch and not committed:
+            discard_created_branch(args.git, branch, previous_ref, synced)
 
     # Only the name of the branch the commits went to; printed after the
     # temporary-directory cleanup so it really is the last line of output.
