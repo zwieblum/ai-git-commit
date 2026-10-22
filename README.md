@@ -153,6 +153,16 @@ After an import that created commits, the tip of the branch gets an **annotated 
 * Read the descriptions with `git tag -n99 -l 'desc/*'`; `git show desc/<branch>`.
 * `--revert` removes the tag of the removed branch as well (otherwise it would keep the commits alive). The tag is local and not part of `--export`.
 
+### Omitting `--add`
+
+`--add` may be left out: a single stray path (directory or archive) is taken as the source, in any position on the command line:
+
+```bash
+python ai_git_commit.py --url http://localhost:8080/v1 --name 'Botter <ai@localhost>' snapshot-2020.zip
+```
+
+A note is printed. Giving both `--add X` and a stray path is an error, as is a stray path together with `--export`, `--revert`, `--cleanup` or `--list` (for `--export`, a word directly after it is the branch name).
+
 ### Cleanup mode
 
 Requires no other option (`--repo` defaults to `./repository`). Permanently deletes everything that no branch reaches any more, e.g. the commits of branches removed with `--revert`:
