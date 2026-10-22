@@ -1207,10 +1207,13 @@ def plan_commits(
             + (f" from archive '{archive_name}'" if archive_name else "")
             + f"\nTotal hunks: {len(hunks)}\n\n"
             f"{hunk_block}\n\n"
-            "Produce the list of commits that split this file into functional hunks."
+            "Produce the plan: one commit per hunk, in the order they should be applied."
         )
-        raw = call_llm(base_url, model, system, user, api_key)
-        data = _extract_json_array(raw)
+        try:
+            data = _extract_json_array(call_llm(base_url, model, system, user, api_key))
+        except RuntimeError as exc:
+            print(f"  warning: unusable plan for {c.path} ({exc}); using hunk order with generic messages")
+            data = []
 
         assigned: set[int] = set()
         file_plans: list[CommitPlan] = []
