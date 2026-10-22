@@ -1289,202 +1289,169 @@ def _format_git_date(timestamp: float) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S +0000")
 
 
+def _snapshot_worktree(repo: Path, paths: list[str]) -> dict[str, tuple[bytes, float] | None]:
+    """Remember the synced (final) content and mtime of *paths*; None = absent."""
+    snap: dict[str, tuple[bytes, float] | None] = {}
+    for p in paths:
+        full = repo / p
+        if full.is_file():
+            snap[p] = (full.read_bytes(), full.stat().st_mtime)
+        else:
+            snap[p] = None
+    return snap
+
+
+def _write_file(repo: Path, path: str, data: bytes, mtime: float | None) -> None:
+    full = repo / path
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(data)
+    if mtime is not None:
+        os.utime(full, (mtime, mtime))
+
+
+def _rollback(
+    repo: Path,
+    start_head: str | None,
+    snapshot: dict[str, tuple[bytes, float] | None],
+) -> None:
+    """Undo every commit made by this run and restore the synced working tree.
+
+    HEAD goes back to where it was before the first commit; the index is reset
+    and each snapshotted file gets its final (synced) content back, so the
+    repository is in exactly the state it had before apply_commits() started.
+    """
+    if start_head:
+        run_git(repo, "reset", "--mixed", "-q", start_head, check=False)
+    else:  # repository had no commit before this run
+        run_git(repo, "update-ref", "-d", "HEAD", check=False)
+        run_git(repo, "read-tree", "--empty", check=False)
+    for path, st in snapshot.items():
+        full = repo / path
+        if st is None:
+            if full.is_file():
+                full.unlink()
+        else:
+            _write_file(repo, path, st[0], st[1])
+
+
 def apply_commits(
     repo: Path,
     plans: list[CommitPlan],
     author_name: str,
     author_email: str,
 ) -> None:
+    """Create the planned commits; on any failure undo all of them again.
+
+    Hunk plans are executed by the program, one hunk at a time:
+      1. take the file as it is in the repository (HEAD),
+      2. apply ONE hunk to it,
+      3. stage and commit it,
+      4. repeat until all hunks of the file are committed.
+    If any commit fails, every commit created by this run is reverted
+    (HEAD is reset to its starting point, the synced files are restored) and
+    the program exits with an error.
+    """
     base_env = os.environ.copy()
     base_env["GIT_AUTHOR_NAME"] = author_name
     base_env["GIT_AUTHOR_EMAIL"] = author_email
     base_env["GIT_COMMITTER_NAME"] = author_name
     base_env["GIT_COMMITTER_EMAIL"] = author_email
 
-    # Per-file state for sequential hunk application:
-    #   path -> {"final": bytes, "hunks": list[DiffHunk], "applied": set[int], "is_new": bool}
-    large_state: dict[str, dict] = {}
+    start_head = (
+        run_git(repo, "rev-parse", "HEAD").stdout.strip() if has_commits(repo) else None
+    )
+    all_paths = sorted({p for pl in plans for p in list(pl.files) + list(pl.hunks)})
+    snapshot = _snapshot_worktree(repo, all_paths)
 
-    # Snapshot which paths are new relative to the *initial* HEAD (before we
-    # create any commits in this run).  Later commits must not flip is_new.
-    initially_new: set[str] = set()
-    for plan in plans:
-        for path in list(plan.files) + list(plan.hunks.keys()):
-            if path in initially_new:
-                continue
-            if not has_commits(repo):
-                initially_new.add(path)
+    # Per hunk-file state: the hunks of the diff HEAD→worktree and which ones are committed.
+    hunk_state: dict[str, dict] = {}
+    for pl in plans:
+        for path in pl.hunks:
+            if path not in hunk_state:
+                hunk_state[path] = {
+                    "hunks": _parse_unified_hunks(_get_file_diff(repo, path)),
+                    "applied": [],
+                }
+
+    made = 0
+    try:
+        for i, plan in enumerate(
+            tqdm(plans, desc="Creating commits", unit="commit", leave=True), start=1
+        ):
+            tqdm.write(f"\n=== Commit {i}/{len(plans)} ===")
+            tqdm.write(f"Message: {plan.message}")
+            tqdm.write(f"Files: {', '.join(plan.files)}")
+
+            if plan.hunks:
+                for path, idxs in plan.hunks.items():
+                    st = hunk_state[path]
+                    final = snapshot[path][0] if snapshot[path] else b""
+                    mtime = snapshot[path][1] if snapshot[path] else None
+                    # 1) the file as it is in the repository right now
+                    current = read_head_file(repo, path)
+                    for idx in idxs:
+                        h = st["hunks"][idx]
+                        # 2) change exactly one hunk
+                        current = apply_hunk(current, h, st["applied"])
+                        st["applied"].append(h)
+                        tqdm.write(f"  hunk {idx} of {path}: {h.header} (+/-{h.change_lines})")
+                    if len(st["applied"]) == len(st["hunks"]) and current != final:
+                        raise HunkError(
+                            f"{path}: after the last hunk the file differs from the synced source"
+                        )
+                    _write_file(repo, path, current, mtime)
+                    run_git(repo, "add", "--", path)
             else:
-                in_head = run_git(
-                    repo, "ls-tree", "HEAD", "--", path, check=False
-                ).stdout.strip()
-                if not in_head:
-                    initially_new.add(path)
-
-    def _ensure_large_state(path: str) -> dict:
-        if path in large_state:
-            return large_state[path]
-        full = repo / path
-        final = full.read_bytes() if full.exists() else b""
-        # Prefer the already-saved final content for diff synthesis if the
-        # worktree file was altered; for planning-time consistency we re-read
-        # from worktree when present.
-        diff_text = _get_file_diff(repo, path)
-        hunks = _parse_unified_hunks(diff_text)
-        is_new = path in initially_new
-        large_state[path] = {
-            "final": final,
-            "hunks": hunks,
-            "applied": set(),
-            "is_new": is_new,
-        }
-        return large_state[path]
-
-    for i, plan in enumerate(
-        tqdm(plans, desc="Creating commits", unit="commit", leave=True), start=1
-    ):
-        tqdm.write(f"\n=== Commit {i}/{len(plans)} ===")
-        tqdm.write(f"Message: {plan.message}")
-        tqdm.write(f"Files: {', '.join(plan.files)}")
-        if plan.hunks:
-            for p, idxs in plan.hunks.items():
-                tqdm.write(f"  hunks[{p}]: {idxs}")
-
-        if plan.hunks:
-            # Partial / sequential hunk application for large files
-            for path, idxs in plan.hunks.items():
-                st = _ensure_large_state(path)
-                st["applied"].update(idxs)
-                cumulative = sorted(st["applied"])
-                all_idx = set(range(len(st["hunks"])))
-                full = repo / path
-
-                # New files: always stage the full final content.  Splitting a
-                # brand-new file into intermediate patch steps is unreliable
-                # (no base in HEAD); the model still produces a useful message.
-                if st["is_new"]:
-                    full.parent.mkdir(parents=True, exist_ok=True)
-                    full.write_bytes(st["final"])
-                    run_git(repo, "add", "--", path, check=False)
-                    st["applied"] = set(all_idx)  # mark complete
-                    continue
-
-                # Existing file: restore base then apply cumulative hunks
-                run_git(repo, "checkout", "HEAD", "--", path, check=False)
-
-                patch = _build_partial_patch(
-                    path, st["hunks"], cumulative, is_new=st["is_new"]
-                )
-                applied_ok = False
-                if patch:
-                    with tempfile.NamedTemporaryFile(
-                        mode="w", suffix=".patch", delete=False, encoding="utf-8"
-                    ) as tf:
-                        tf.write(patch)
-                        patch_path = tf.name
-                    try:
-                        r = subprocess.run(
-                            [
-                                "git",
-                                "-C",
-                                str(repo),
-                                "apply",
-                                "--recount",
-                                "--whitespace=nowarn",
-                                patch_path,
-                            ],
-                            capture_output=True,
-                            text=True,
-                        )
-                        applied_ok = r.returncode == 0
-                        if not applied_ok:
-                            tqdm.write(
-                                f"  warning: git apply failed for {path}:\n{r.stderr.strip()}"
-                            )
-                    finally:
-                        os.unlink(patch_path)
-
-                if not applied_ok:
-                    # Fallback: write final content when this is the complete set
-                    if st["applied"] >= all_idx or st["is_new"]:
-                        full.parent.mkdir(parents=True, exist_ok=True)
-                        full.write_bytes(st["final"])
-                        tqdm.write(f"  (wrote final content for {path})")
+                # Full-file staging (small files / deletions)
+                to_add = []
+                for p in plan.files:
+                    full = repo / p
+                    if full.exists() or full.is_symlink():
+                        to_add.append(p)
                     else:
-                        tqdm.write(
-                            f"  warning: could not apply intermediate hunks for {path}; "
-                            "skipping stage for this commit"
-                        )
-                        continue
+                        run_git(repo, "rm", "--ignore-unmatch", "-f", "--", p, check=False)
+                if to_add:
+                    run_git(repo, "add", "--", *to_add)
 
-                if full.exists() or full.is_symlink():
-                    run_git(repo, "add", "--", path, check=False)
-                else:
-                    tqdm.write(f"  warning: {path} missing after apply – not staged")
-        else:
-            # Full-file staging (small files / deletions)
-            to_add = []
-            for p in plan.files:
-                full = repo / p
-                if full.exists() or full.is_symlink():
-                    to_add.append(p)
-                else:
-                    run_git(repo, "rm", "--ignore-unmatch", "-f", "--", p, check=False)
-            if to_add:
-                run_git(repo, "add", "--", *to_add)
+            staged = run_git(repo, "diff", "--cached", "--name-only")
+            if not staged.stdout.strip():
+                tqdm.write("  (nothing staged – skipping)")
+                continue
 
-        # Safety: make sure something is staged
-        staged = run_git(repo, "diff", "--cached", "--name-only")
-        if not staged.stdout.strip():
-            tqdm.write("  (nothing staged – skipping)")
-            continue
+            # Commit date = mtime of the source files (kept from before any rewrite)
+            env = base_env.copy()
+            times = [snapshot[p][1] for p in plan.files if snapshot.get(p)]
+            mtime_c = max(times) if times else _max_mtime_for_paths(repo, plan.files)
+            if mtime_c is not None:
+                date_str = _format_git_date(mtime_c)
+                env["GIT_AUTHOR_DATE"] = date_str
+                env["GIT_COMMITTER_DATE"] = date_str
+                tqdm.write(f"  date: {date_str} (from source file mtime)")
+            else:
+                tqdm.write("  date: (current time – no surviving files for mtime)")
 
-        # Derive commit date from the source files' modification times
-        env = base_env.copy()
-        # For hunk commits prefer the final-file mtime (stored in large_state)
-        mtime = None
-        for p in plan.files:
-            if p in large_state and large_state[p]["final"]:
-                # use a synthetic mtime from the final bytes via the live file if present
-                full = repo / p
-                if full.exists():
-                    try:
-                        mtime = full.stat().st_mtime
-                    except OSError:
-                        pass
-        if mtime is None:
-            mtime = _max_mtime_for_paths(repo, plan.files)
-        if mtime is not None:
-            date_str = _format_git_date(mtime)
-            env["GIT_AUTHOR_DATE"] = date_str
-            env["GIT_COMMITTER_DATE"] = date_str
-            tqdm.write(f"  date: {date_str} (from source file mtime)")
-        else:
-            tqdm.write("  date: (current time – no surviving files for mtime)")
-
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "commit",
-                "-m",
-                plan.message,
-            ],
-            check=True,
-            env=env,
+            # 3) commit
+            r = subprocess.run(
+                ["git", "-C", str(repo), "commit", "-m", plan.message],
+                env=env, capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(
+                    f"git commit failed (exit {r.returncode}): "
+                    f"{(r.stderr or r.stdout).strip()}"
+                )
+            made += 1
+            tqdm.write("  committed.")
+        # 4) the loop repeats until every planned hunk is committed
+    except (Exception, KeyboardInterrupt) as exc:
+        tqdm.write(f"\nERROR in commit {made + 1}/{len(plans)}: {exc}")
+        tqdm.write(f"Reverting the {made} commit(s) created by this run …")
+        _rollback(repo, start_head, snapshot)
+        where = f"HEAD is back at {start_head[:12]}" if start_head else "the repository is empty again"
+        raise SystemExit(
+            f"Aborted: {exc}\nAll {made} commit(s) of this run were reverted; {where}, "
+            "the synced files are in the working tree (uncommitted)."
         )
-        tqdm.write("  committed.")
-
-    # After all commits, ensure large files match the final synced content
-    for path, st in large_state.items():
-        full = repo / path
-        if st["final"] and (not full.exists() or full.read_bytes() != st["final"]):
-            full.parent.mkdir(parents=True, exist_ok=True)
-            full.write_bytes(st["final"])
-            run_git(repo, "add", "--", path)
-            # if there is a remaining diff, it will show as dirty – user can fix;
-            # normally the last hunk commit should already match
 
 
 def list_local_branches(repo: Path) -> list[str]:
