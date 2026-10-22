@@ -680,8 +680,13 @@ def call_llm(
     system: str,
     user: str,
     api_key: str | None = None,
+    max_tokens: int = 4096,
+    allow_empty: bool = False,
 ) -> str:
     """Call OpenAI-compatible /v1/chat/completions.
+
+    ``allow_empty`` accepts a null/empty completion (used by the availability
+    check, where reasoning models may spend a small token budget on thinking).
 
     Raises SystemExit with a clear message on network / HTTP / response errors
     so the program does not crash with an unhandled traceback.
@@ -697,7 +702,7 @@ def call_llm(
             {"role": "user", "content": user},
         ],
         "temperature": 0.3,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
     }
     def _die(msg: str) -> None:
         """Print a clear error and exit without a long exception chain."""
@@ -762,6 +767,8 @@ def call_llm(
     try:
         content = data["choices"][0]["message"]["content"]
         if content is None:
+            if allow_empty:
+                return ""
             raise KeyError("content is null")
         return content.strip()
     except (KeyError, IndexError, TypeError):
@@ -770,6 +777,27 @@ def call_llm(
             f"(model '{model}' may be unavailable or returned an empty completion).\n"
             f"  Response: {data!r}"
         )
+
+
+def check_model(base_url: str, model: str, api_key: str | None = None) -> None:
+    """Verify that *model* answers, by sending a tiny "hi" test prompt.
+
+    Called before anything in the repository is touched, so an unreachable
+    server or an unavailable model aborts the run cleanly (call_llm exits
+    with a descriptive error).
+    """
+    print(f"Checking model '{model}' with a test prompt …")
+    reply = call_llm(
+        base_url,
+        model,
+        "You are a helpful assistant.",
+        "hi",
+        api_key,
+        max_tokens=32,
+        allow_empty=True,
+    )
+    shown = " ".join(reply.split())[:60]
+    print(f"  model OK" + (f" (reply: {shown!r})" if shown else " (empty reply)"))
 
 
 def _parse_unified_hunks(diff_text: str) -> list[DiffHunk]:
@@ -1709,6 +1737,10 @@ def main() -> None:
         raise SystemExit(
             "Repository has staged changes. Please commit or unstage them first."
         )
+
+    # Make sure the model really answers before the repository is touched
+    # (branch creation, sync and commits all come after this point).
+    check_model(args.url, args.model, args.api_key)
 
     # Branch selection: explicit --branch wins; otherwise derive from archive name
     branch = args.branch
