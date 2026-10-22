@@ -178,3 +178,13 @@ splitting in hunks does not work when done by the model. change it so that the m
 **Assistant:**
 
 The model now only returns a plan (`[{"hunk": N, "message": "..."}]`: order + one message per hunk). The program does the splitting: `apply_commits()` takes the file from HEAD (`git show`), applies exactly one hunk with its own `apply_hunk()` (offset-tracking, expected lines verified; no `git apply`), stages and commits, and repeats until all hunks are done; the final file must equal the synced source. Any failed commit (or hunk mismatch/Ctrl-C) reverts all commits of the run (`_rollback()`: HEAD reset to its start, synced files restored uncommitted) and exits with an error. Before planning, all hunks are dry-run against HEAD; if they don't reproduce the file it is committed whole. Model output is repaired (bad/duplicate indices dropped, forgotten hunks appended with generic messages, unparsable answer → generic plan). Commit dates now come from the source mtimes captured before any rewrite. Tested with a real repo: sequential and shuffled hunk order, forced commit failure at commit 3 of 5 (2 commits reverted, working tree restored), mock model with bad indices; tqdm stubbed (not installable in the sandbox). Not covered: a new file is a single hunk, so it is still one commit. README updated.
+
+---
+
+**User:**
+
+A branch created for the import should be deleted after a rollback
+
+**Assistant:**
+
+`ensure_branch()` now returns whether it created the branch. If the run ends without a commit, the new branch is deleted (`discard_created_branch()`): previous branch checked out again (`-f` after a real sync), synced untracked files removed (`git clean`, only after a real sync), `git branch -D`. This covers the rollback after a failed commit and also any other error before committing, `--dry-run` and "no changes" (they used to leave the branch behind). Existing branches (`--branch NAME`) are never deleted; successful imports are untouched. Tested with a mock model and a commit-msg hook rejecting the 4th commit of 6: 3 commits reverted, branch `002-b` deleted, back on `001-a`, clean tree; retry without hook succeeded; dry-run on a new branch left no branch. README updated.
