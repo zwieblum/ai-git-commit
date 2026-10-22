@@ -117,7 +117,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`; other lines are unchanged. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`; other lines are unchanged. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -147,6 +147,7 @@ python ai_git_commit.py --repo /path/to/repo --revert
 After an import that created commits, the tip of the branch gets an **annotated tag** `desc/<branch>` (e.g. `desc/013-llm-errors`) whose message is the description of that version:
 
 * If the repository contains a description document in its root – `conversation.*` first, then `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total). The **only source is the diff of that document** between the previous tip and the new tip (for a first import: the whole document); commit messages and other files are not used. The description covers the **project changes**; it never mentions the document, a conversation or the fact that a log was updated (prompt rule, one retry, and mentioning sentences are dropped). If the document did not change, or nothing is left after that, no tag is created (a note is printed).
+* The description is **plain text**: any markup the model produces (emphasis, backticks, headings, list markers, quotes, links, code fences) is removed; `--list` strips it from older tags as well.
 * `--describe TEXT` overrides this: TEXT is used as the tag message (no model call).
 * Without a description document and without `--describe` no tag is created (a note is printed).
 * Re-importing into an existing branch (`--branch NAME`) replaces its tag. `--dry-run` and imports without commits create nothing. A failure while creating the tag only prints a warning; the commits stay.
