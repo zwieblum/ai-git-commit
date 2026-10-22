@@ -117,7 +117,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints exactly the output of `git branch --all` (current branch marked with `*`) and exits. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints the output of `git branch --all` (current branch marked with `*`) and exits. Each local branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the subject line of the tag message), e.g. `  013-llm-errors  Add retries for LLM errors`; other lines are unchanged. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
