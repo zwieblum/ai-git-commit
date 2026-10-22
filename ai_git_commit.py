@@ -448,7 +448,7 @@ def detect_extra_directory_layer(src: Path, repo: Path) -> str | None:
         f"{', '.join(sorted(overlap)[:5])}{'…' if len(overlap) > 5 else ''}\n"
         f"\n"
         f"This usually means the content was nested one directory deeper than "
-        f"expected.  Please point --src at the correct directory (or unpack "
+        f"expected.  Please point --add at the correct directory (or unpack "
         f"an archive, which is automatically stripped) and try again."
     )
 
@@ -1472,25 +1472,29 @@ def main() -> None:
             "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
             "or export/recreate archives from existing branches.\n"
             "\n"
-            "Two modes (only --git is always required):\n"
+            "Three modes (only --git is always required):\n"
             "\n"
-            "  IMPORT  – sync --src into --git and create commits (needs LLM)\n"
-            "            requires: --git --url --src --name\n"
+            "  LIST    – print all branches like 'git branch --all' (the default\n"
+            "            when neither --add nor --export is given)\n"
+            "            requires: --git\n"
+            "\n"
+            "  IMPORT  – sync --add into --git and create commits (needs LLM)\n"
+            "            requires: --git --url --add --name\n"
             "            optional: --model (default: first/active model from GET /v1/models)\n"
             "\n"
             "  EXPORT  – recreate a zip/tar from a branch\n"
             "            requires: --git --export [NAME]\n"
-            "            does NOT need --url, --model, --src, or --name"
+            "            does NOT need --url, --model, --add, or --name"
         ),
         epilog=(
             "examples:\n"
             "  # Import an archive (creates branch from archive name)\n"
             "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
-            "      --src snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
+            "      --add snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
             "\n"
             "  # Import with an explicit model\n"
             "  %(prog)s --git ./repo --url http://localhost:8080/v1 \\\n"
-            "      --model qwen2.5-coder --src snapshot-2020.zip \\\n"
+            "      --model qwen2.5-coder --add snapshot-2020.zip \\\n"
             "      --name 'Botter <ai@localhost>'\n"
             "\n"
             "  # Export the last imported archive (newest branch tip)\n"
@@ -1503,7 +1507,8 @@ def main() -> None:
             "\n"
             "  # List all branches (like 'git branch --all'); needs only --git\n"
             "  %(prog)s --git ./repo --list\n"
-            "  %(prog)s --git ./repo          # same: --list is assumed\n"
+            "  %(prog)s --git ./repo          # same: --list is the default\n"
+            "                                 # when neither --add nor --export is given\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
             "  %(prog)s --git ./repo --export 013-llm-errors --no-strip\n"
@@ -1531,9 +1536,10 @@ def main() -> None:
         help="Model name (default: first/active model from GET {url}/models)",
     )
     import_opts.add_argument(
-        "--src",
+        "--add",
         default=None,
         type=Path,
+        metavar="PATH",
         help="Source directory or archive (.zip / .tar / .tar.gz / …)",
     )
     import_opts.add_argument(
@@ -1552,7 +1558,7 @@ def main() -> None:
         "--branch",
         default=None,
         metavar="NAME",
-        help="Branch to commit on (default: archive basename if --src is an archive)",
+        help="Branch to commit on (default: archive basename if --add is an archive)",
     )
     import_opts.add_argument(
         "--mention-archive",
@@ -1566,17 +1572,17 @@ def main() -> None:
     )
     # --- export mode ---
     list_opts = parser.add_argument_group(
-        "list mode (needs only --git; assumed when --git is the only option)"
+        "list mode (needs only --git; the default when neither --add nor --export is given)"
     )
     list_opts.add_argument(
         "--list",
         action="store_true",
         help="Print all branches of the repository like 'git branch --all' "
-        "and exit.  Implied when --git is the only option given.  (No branch "
-        "listing is shown after an import or export.)",
+        "and exit.  This is the default when neither --add nor --export is "
+        "given.  (No branch listing is shown after an import or export.)",
     )
     export_opts = parser.add_argument_group(
-        "export mode (does not need --url / --model / --src / --name)"
+        "export mode (does not need --url / --model / --add / --name)"
     )
     export_opts.add_argument(
         "--export",
@@ -1611,12 +1617,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Only --git given (every other option still at its default) → --list
-    if not args.list and all(
-        getattr(args, dest) == parser.get_default(dest)
-        for dest in vars(args)
-        if dest != "git"
-    ):
+    # Neither --export nor --add given → list mode is the default
+    if args.export is None and args.add is None:
         args.list = True
 
     if args.strip is not None and args.export is None:
@@ -1626,8 +1628,23 @@ def main() -> None:
 
     # ----- list mode -----
     if args.list:
-        if args.export is not None or args.src is not None:
-            parser.error("--list cannot be combined with --export or --src")
+        if args.export is not None or args.add is not None:
+            parser.error("--list cannot be combined with --export or --add")
+        ignored = [
+            flag
+            for flag, dest in (
+                ("--url", "url"), ("--model", "model"), ("--name", "name"),
+                ("--branch", "branch"), ("--mention-archive", "mention_archive"),
+                ("--dry-run", "dry_run"),
+            )
+            if getattr(args, dest) != parser.get_default(dest)
+        ]
+        if ignored:
+            print(
+                f"Note: {', '.join(ignored)} ignored – listing branches "
+                "(use --add ARCHIVE_OR_DIR to import).",
+                file=sys.stderr,
+            )
         require_git_repo(args.git)
         list_branches(args.git)
         return
@@ -1654,7 +1671,7 @@ def main() -> None:
         flag
         for flag, val in (
             ("--url", args.url),
-            ("--src", args.src),
+            ("--add", args.add),
             ("--name", args.name),
         )
         if not val
@@ -1669,7 +1686,7 @@ def main() -> None:
     # An archive whose name (without extension) matches an existing branch has
     # already been imported (or clashes with another release): refuse before
     # doing anything else.  An explicit --branch still lets you add to a branch.
-    _src_path = args.src.expanduser().resolve()
+    _src_path = args.add.expanduser().resolve()
     if args.branch is None and is_archive(_src_path):
         _derived = branch_name_from_archive(_src_path)
         if branch_exists(args.git, _derived):
@@ -1695,15 +1712,15 @@ def main() -> None:
 
     # Branch selection: explicit --branch wins; otherwise derive from archive name
     branch = args.branch
-    if branch is None and is_archive(args.src.expanduser().resolve()):
-        branch = branch_name_from_archive(args.src)
+    if branch is None and is_archive(args.add.expanduser().resolve()):
+        branch = branch_name_from_archive(args.add)
         print(f"Archive detected – using branch name '{branch}' (override with --branch)")
     if branch:
         ensure_branch(args.git, branch)
 
     # Safety: the sync step runs "rsync --delete" into the repo, so a source
     # (archive or directory) located inside the repo would be deleted by it.
-    _src_abs = args.src.expanduser().resolve()
+    _src_abs = args.add.expanduser().resolve()
     _repo_abs = args.git.expanduser().resolve()
     if _src_abs == _repo_abs or _repo_abs in _src_abs.parents:
         raise SystemExit(
@@ -1712,11 +1729,11 @@ def main() -> None:
         )
 
     committed = False
-    with resolve_source(args.src) as effective_src:
+    with resolve_source(args.add) as effective_src:
         if not effective_src.is_dir():
             raise SystemExit(
                 f"Internal error: resolved source is not a directory: {effective_src} "
-                f"(from --src {args.src}). Is this the current ai_git_commit.py?"
+                f"(from --add {args.add}). Is this the current ai_git_commit.py?"
             )
         # Warn & abort if the (plain) source tree has extra directory layers
         # relative to the repository.  Archives are already stripped by
@@ -1745,7 +1762,7 @@ def main() -> None:
 
         print("\nAsking model for commit plan …")
         archive_label = None
-        src_path = args.src.expanduser().resolve()
+        src_path = args.add.expanduser().resolve()
         if args.mention_archive and is_archive(src_path):
             archive_label = src_path.name  # keep full name including extension
         plans = plan_commits(
