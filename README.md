@@ -142,6 +142,17 @@ python ai_git_commit.py --repo /path/to/repo --revert
 * Safety: the program refuses to remove the **only** branch, and refuses to run when the working tree has uncommitted or untracked changes (the message shows how to discard them, e.g. after a failed import).
 * `--revert` cannot be combined with `--add`, `--export` or `--list` (error). Import-only options such as `--name` are ignored with a note on stderr. It never creates the repository.
 
+### Branch description (annotated tag)
+
+After an import that created commits, the tip of the branch gets an **annotated tag** `desc/<branch>` (e.g. `desc/013-llm-errors`) whose message is the description of that version:
+
+* If the repository contains a description document in its root – `conversation.*` first, then `README*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a short summary (subject line + body, ≤ 120 words) of the **progression from the previous version** to the current one. Source: the diff of that document between the previous tip and the new tip; if the document is new or unchanged, its full text; plus the commit messages and changed-file stat.
+* `--describe TEXT` overrides this: TEXT is used as the tag message (no model call).
+* Without a description document and without `--describe` no tag is created (a note is printed).
+* Re-importing into an existing branch (`--branch NAME`) replaces its tag. `--dry-run` and imports without commits create nothing. A failure while creating the tag only prints a warning; the commits stay.
+* Read the descriptions with `git tag -n99 -l 'desc/*'`; `git show desc/<branch>`.
+* `--revert` removes the tag of the removed branch as well (otherwise it would keep the commits alive). The tag is local and not part of `--export`.
+
 ### Cleanup mode
 
 Requires no other option (`--repo` defaults to `./repository`). Permanently deletes everything that no branch reaches any more, e.g. the commits of branches removed with `--revert`:
@@ -167,6 +178,7 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
 | `--branch` | no | no | Branch to commit on (default: archive basename when `--add` is an archive) |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
+| `--describe` | no | no | Text for the branch description tag `desc/<branch>`; overrides the automatic summary from conversation.md / README… |
 | `--dry-run` | no | no | Plan commits only; do not write |
 | `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
