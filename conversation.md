@@ -148,3 +148,13 @@ rename "--src" to "--add"
 **Assistant:**
 
 Renamed `--src` to `--add` everywhere (option, `args.add`, error/help texts, README); the old name is no longer accepted. List mode is now the default whenever neither `--export` nor `--add` is given (replacing the earlier "only `--git`" rule), so `--git repo --name …` or `--git repo --dry-run` also just lists; import-only options given in that case are ignored with a note on stderr (`Note: --name, --dry-run ignored – listing branches (use --add ARCHIVE_OR_DIR to import).`). `--list` together with `--add`/`--export` is still an error. Tested: import with `--add`, `--src` rejected, default list, ignored-options note, missing import options, export. `--add` shows `PATH` as metavar in `--help`.
+
+---
+
+**User:**
+
+check model availability befor committing. Do this by sending "hi" as a test pompt.
+
+**Assistant:**
+
+New `check_model()`: after the cheap checks (staged changes, branch-exists) and **before** branch creation, sync and commits, the program sends the test prompt `hi` (system prompt "You are a helpful assistant.", max 32 tokens) through the existing `call_llm()` and prints `Checking model '…' with a test prompt …` / `model OK (reply: '…')`. Unreachable server, HTTP errors (404/503, "model not found"), a malformed answer or a timeout abort with the usual descriptive error before anything is changed (also with `--dry-run`, since it still queries the model). `call_llm()` got `max_tokens` and `allow_empty` parameters; a null/empty completion counts as OK for the check, so reasoning models that spend the small budget on thinking are not rejected. Tested against mock servers: OK, 404, malformed JSON, null content, server down, dry-run; in all failure cases no branch was created. A repository that does not exist yet is still initialised (empty) before the check, as before. README ("Model availability check") updated.
