@@ -198,8 +198,9 @@ def branch_descriptions(repo: Path) -> dict[str, str]:
     prefix = f"refs/tags/{TAG_PREFIX}"
     for line in r.stdout.splitlines():
         ref, _, subject = line.partition("\t")
-        if ref.startswith(prefix) and subject.strip():
-            out[ref[len(prefix):]] = subject.strip()
+        subject = clean_subject(subject)  # also fixes tags created by older versions
+        if ref.startswith(prefix) and subject:
+            out[ref[len(prefix):]] = subject
     return out
 
 
@@ -292,7 +293,7 @@ def summarize_progress(
         "stored as the message of an annotated Git tag. Summarize the differences / "
         "progression from the previous version to the current version, based mainly "
         f"on the document provided. Output PLAIN TEXT only: one subject line (<=72 "
-        "characters), a blank line, then a short body of what changed. No markdown "
+        "characters, WITHOUT a 'Subject:' prefix or any markdown), a blank line, then a short body of what changed. No markdown "
         f"headings, no code fences, at most {MAX_DESCRIPTION_WORDS} words in total."
     )
     raw = call_llm(base_url, model, system, "\n\n".join(parts), api_key, max_tokens=1024)
@@ -304,9 +305,21 @@ def read_head_file_at(repo: Path, ref: str, path: str) -> bytes:
     return r.stdout if r.returncode == 0 else b""
 
 
+def clean_subject(line: str) -> str:
+    """Drop markdown emphasis and a leading 'Subject:' / 'Title:' label.
+
+    ``**Subject:** Foo`` and ``**Subject: Foo**`` both become ``Foo``.
+    """
+    line = line.strip().strip("*`# ")
+    line = re.sub(r"^(?:subject|title)\s*:\s*", "", line, flags=re.IGNORECASE)
+    return line.strip("*`# ")
+
+
 def normalize_description(text: str) -> str:
     """Strip code fences, trim, and cut to MAX_DESCRIPTION_WORDS words."""
     text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip())
+    first, sep, rest = text.partition("\n")
+    text = clean_subject(first) + sep + rest
     out: list[str] = []
     used = 0
     for line in text.splitlines():
