@@ -204,6 +204,35 @@ def current_branch(repo: Path) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _repo_size_kib(repo: Path) -> int:
+    """Size of the object database (loose + packed) in KiB."""
+    info = {}
+    for line in run_git(repo, "count-objects", "-v").stdout.splitlines():
+        k, _, v = line.partition(":")
+        info[k.strip()] = v.strip()
+    return sum(int(info.get(k, "0") or 0) for k in ("size", "size-pack", "size-garbage"))
+
+
+def cleanup_repository(repo: Path) -> None:
+    """Permanently delete everything no branch can reach any more.
+
+    Expires the whole reflog and prunes unreachable objects immediately
+    (``git reflog expire --expire=now --all`` + ``git gc --prune=now``), so
+    commits of deleted/reverted branches are gone for good.  No confirmation.
+    """
+    require_git_repo(repo)
+    before = _repo_size_kib(repo)
+    fsck = run_git(repo, "fsck", "--unreachable", "--no-reflogs", check=False)
+    commits = sum(1 for ln in fsck.stdout.splitlines() if ln.startswith("unreachable commit"))
+    objects = sum(1 for ln in fsck.stdout.splitlines() if ln.startswith("unreachable "))
+    print(f"Cleaning up {repo} …")
+    run_git(repo, "reflog", "expire", "--expire=now", "--all")
+    run_git(repo, "gc", "--prune=now", "-q")
+    after = _repo_size_kib(repo)
+    print(f"Removed {commits} unreachable commit(s) ({objects} unreachable object(s) in total).")
+    print(f"Repository size: {before} KiB → {after} KiB.")
+
+
 def revert_last_branch(repo: Path) -> None:
     """Remove the last branch (see ``latest_release_branch``) from *repo*.
 
@@ -1613,7 +1642,7 @@ def main() -> None:
             "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
             "or export/recreate archives from existing branches.\n"
             "\n"
-            "Four modes (--repo defaults to ./repository):\n"
+            "Five modes (--repo defaults to ./repository):\n"
             "\n"
             "  LIST    – print all branches like 'git branch --all' (the default\n"
             "            when neither --add nor --export is given)\n"
@@ -1621,6 +1650,10 @@ def main() -> None:
             "\n"
             "  REVERT  – remove the last branch from the repository\n"
             "            requires: --revert (not with --add / --export / --list)\n"
+            "\n"
+            "  CLEANUP – permanently delete commits no branch reaches any more\n"
+            "            (reflog expire + gc --prune=now), no confirmation\n"
+            "            requires: --cleanup (not with --add / --export / --revert / --list)\n"
             "\n"
             "  IMPORT  – sync --add into --repo and create commits (needs LLM)\n"
             "            requires: --url --add --name\n"
@@ -1656,6 +1689,9 @@ def main() -> None:
             "\n"
             "  # Remove the last branch again (e.g. after a bad import)\n"
             "  %(prog)s --repo ./repo --revert\n"
+            "\n"
+            "  # Permanently delete the commits of removed branches (no confirmation)\n"
+            "  %(prog)s --repo ./repo --cleanup\n"
             "\n"
             "  # Export keeping the top-level <branch>/ directory\n"
             "  %(prog)s --repo ./repo --export 013-llm-errors --no-strip\n"
@@ -1740,6 +1776,17 @@ def main() -> None:
         "is checked out, the previous branch is checked out first.  Refuses "
         "to remove the only branch or to run with uncommitted changes.",
     )
+    cleanup_opts = parser.add_argument_group(
+        "cleanup mode (needs no other option; cannot be combined with --add / --export / --revert / --list)"
+    )
+    cleanup_opts.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Permanently delete all commits and objects that no branch "
+        "reaches any more (e.g. those of reverted branches): expires the "
+        "reflog and runs 'git gc --prune=now'.  Runs WITHOUT confirmation and "
+        "cannot be undone.",
+    )
     export_opts = parser.add_argument_group(
         "export mode (does not need --url / --model / --add / --name)"
     )
@@ -1776,7 +1823,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.revert:
+    if args.cleanup:
+        if args.export is not None or args.add is not None or args.list or args.revert:
+            parser.error(
+                "--cleanup cannot be combined with --add, --export, --revert or --list"
+            )
+    elif args.revert:
         if args.export is not None or args.add is not None or args.list:
             parser.error("--revert cannot be combined with --add, --export or --list")
     elif args.export is None and args.add is None:
@@ -1804,6 +1856,12 @@ def main() -> None:
         parser.error("--strip / --no-strip can only be used together with --export")
     if args.strip is None:
         args.strip = True  # default: files at the archive root
+
+    # ----- cleanup mode -----
+    if args.cleanup:
+        note_ignored("cleaning up the repository")
+        cleanup_repository(args.repo)
+        return
 
     # ----- revert mode -----
     if args.revert:
