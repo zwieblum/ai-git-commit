@@ -298,3 +298,23 @@ changes in conversation.md should not be mentioned in the short description.
 **Assistant:**
 
 The prompt now says the document is only the source of information about what changed in the project: describe those changes, never mention the document, a conversation, requests, users/assistants or "log updated". Safety net: if the result still mentions the document's file name (or "conversation" for conversation.*), the model is asked once more with a reminder; remaining sentences that mention it are dropped. If nothing is left, no tag is created (note printed; `--describe` still works). Tested the filter on sample texts and an import with a mock model that mentions the file on the first attempt.
+
+---
+
+**User:**
+
+description must not use markup, just plain text
+
+**Assistant:**
+
+Generated descriptions are now converted to plain text by `strip_markup()`: code fences and horizontal rules dropped; heading/quote/list markers removed; links and images reduced to their text; bold, italic, strikethrough and inline code unwrapped (snake_case words and `*` in math are left alone). It runs on the whole description (short description and body) and when `--list` reads older tags. The prompt also asks for plain sentences only. Text given with `--describe` is stored exactly as typed. README updated. Tested on a markdown-heavy sample and the earlier `**Subject:**` cases.
+
+---
+
+**User:**
+
+* "--list": make the comment be gray (use ansi esc sequences), make the current branch light green
+
+**Assistant:**
+
+`--list` now prints each branch description in gray (`\033[90m`) and the checked-out branch line in light green (`\033[92m`). Padding is applied before the escape codes so the columns stay aligned. Colors are used only when stdout is a terminal and `NO_COLOR` is unset, so piped output stays plain. README updated.
