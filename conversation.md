@@ -268,3 +268,13 @@ remove the "Subject:" prefix (--list showed `**Subject:** …` / `**Subject: …
 **Assistant:**
 
 New `clean_subject()` strips markdown emphasis (`*`, backticks, `#`) and a leading `Subject:` / `Title:` label (case-insensitive) from the first line. It is applied when a description is generated (so new tags are clean), and when `--list` reads existing tags (so tags created by earlier versions display correctly without being rewritten). The summary prompt also tells the model not to use a prefix or markdown. Tested with both shown variants plus plain, `Title:`, lowercase and underscore-containing subjects.
+
+---
+
+**User:**
+
+make the short description more detailed (~ 50 words)
+
+**Assistant:**
+
+The description tag message is now `short description` (one line, ~50 words: the prompt asks for 40–60, hard cut at 70) + blank line + optional body (whole text capped at 170 words). `--list` shows the short description (first paragraph of the tag, joined to one line) – so existing tags with a one-line subject keep working. `normalize_description()` also handles models that skip the blank line (first line = short description), wrap the short description over several lines, or add `Subject:`/markdown. README updated. Tested normalisation cases and an import with a mock model returning a ~50-word description.
