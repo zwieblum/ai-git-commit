@@ -266,36 +266,25 @@ def summarize_progress(
     repo: Path, doc: str, start_head: str | None,
     base_url: str, model: str, api_key: str | None,
 ) -> str:
-    """Ask the model for a short summary of what changed since *start_head*.
+    """Ask the model for a short description of what changed since *start_head*.
 
-    Primary source is the diff of the description document between the
-    previous version (*start_head*) and the current tip; if the document is new
-    or unchanged, its full text and the commit messages are used instead.
+    The ONLY source is the diff of the description document *doc* between the
+    previous version (*start_head*; the empty tree for a first import) and the
+    current tip – no other files, commit messages or document text.  Returns
+    "" when the document did not change.
     """
-    cur = read_head_file(repo, doc).decode("utf-8", "replace")
-    prev = read_head_file_at(repo, start_head, doc) if start_head else b""
-    parts: list[str] = []
-    if prev and prev.decode("utf-8", "replace") != cur:
-        d = _git_bytes(repo, "diff", "--no-color", "-U2", start_head, "HEAD", "--", doc)
-        parts.append(f"CHANGES OF {doc} SINCE THE PREVIOUS VERSION (unified diff):\n"
-                     + _clip(d.stdout.decode("utf-8", "replace")))
-    else:
-        parts.append(f"CONTENT OF {doc} (current version):\n" + _clip(cur))
-    if start_head:
-        log = run_git(repo, "log", "--format=- %s", f"{start_head}..HEAD", check=False).stdout
-        stat = run_git(repo, "diff", "--stat", start_head, "HEAD", check=False).stdout
-    else:
-        log = run_git(repo, "log", "--format=- %s", check=False).stdout
-        stat = ""
-    if log.strip():
-        parts.append("COMMIT MESSAGES OF THIS VERSION:\n" + _clip(log, 4000))
-    if stat.strip():
-        parts.append("FILES CHANGED:\n" + _clip(stat, 3000))
+    base = start_head or run_git(repo, "hash-object", "-t", "tree", "/dev/null").stdout.strip()
+    d = _git_bytes(repo, "diff", "--no-color", "-U0", base, "HEAD", "--", doc)
+    diff = d.stdout.decode("utf-8", "replace").strip()
+    if not diff:
+        return ""
+    parts = [f"CHANGES OF {doc} SINCE THE PREVIOUS VERSION (unified diff; '+' = added, '-' = removed):\n"
+             + _clip(diff)]
     system = (
         "You write the description of a new version of a software project, to be "
         "stored as the message of an annotated Git tag. Summarize the differences / "
-        "progression from the previous version to the current version, based mainly "
-        "on the document provided. Output PLAIN TEXT only, in this layout:\n"
+        "progression from the previous version to the current version, based ONLY "
+        "on the document changes provided (use nothing else). Output PLAIN TEXT only, in this layout:\n"
         f"1. a SHORT DESCRIPTION: one single line of about {SHORT_DESCRIPTION_WORDS} words "
         "(between 40 and 60) naming the concrete changes and features of this version; "
         "no 'Subject:' or other label, no markdown;\n"
@@ -2258,6 +2247,9 @@ def main() -> None:
                         description = summarize_progress(
                             args.repo, doc, start_head, args.url, args.model, args.api_key
                         )
+                        if not description:
+                            print(f"'{doc}' did not change in this version – no branch description "
+                                  "tag (use --describe TEXT to set one).")
                     else:
                         print("No conversation.md / README found – no branch description tag "
                               "(use --describe TEXT to set one).")
