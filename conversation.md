@@ -415,3 +415,13 @@ I get this error - fix it: [import of jitsi-local-018-subcommands.zip aborted: c
 **Assistant:**
 
 Cause: for hunk commits the file is rewritten with the source mtime each time. `git add` skips a file whose size and mtime match its index entry, so a same-size edit (e.g. a typo fix) was not staged ("nothing staged"), yet the hunk counted as applied; the next hunk then started from a HEAD without it and the final check failed. Hunk files are now staged with `git hash-object -w` plus `git update-index --cacheinfo` (mode taken from the index/HEAD), which never depends on stat data. Reproduced with `core.trustctime=false` and `core.checkStat=minimal` and three same-size hunks: the old staging aborted, the new one commits all three. README updated.
+---
+
+**User:**
+
+read the archive. when "--export" is used, ist must export the active branch. if an additional "--branch NAME" is given, then said branch is exported.
+
+**Assistant:**
+
+`--export` with no NAME now exports the active (checked-out) branch instead of the branch with the newest committer date. If `--branch NAME` is also given, that branch is exported (it overrides both the active branch and any NAME passed to `--export`). `resolve_export_branch` prefers `checked_out_ref`; help text, epilog, and README were updated accordingly.
+
