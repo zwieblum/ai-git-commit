@@ -233,11 +233,27 @@ def branch_descriptions(repo: Path) -> dict[str, str]:
 ANSI_RESET = "\033[0m"
 ANSI_GRAY = "\033[90m"          # bright black = gray
 ANSI_LIGHT_GREEN = "\033[92m"   # bright green
+ANSI_BRIGHT_RED = "\033[91m"    # bright red (error messages)
 
 
-def use_color() -> bool:
-    """Colorize only when writing to a terminal and NO_COLOR is not set."""
-    return sys.stdout.isatty() and "NO_COLOR" not in os.environ
+def use_color(stream: Any = None) -> bool:
+    """Colorize only when *stream* (default: stdout) is a terminal and
+    NO_COLOR is not set."""
+    stream = sys.stdout if stream is None else stream
+    return stream.isatty() and "NO_COLOR" not in os.environ
+
+
+def red(text: str, stream: Any = None) -> str:
+    """Wrap *text* in bright red when *stream* (default: stderr) is a terminal."""
+    stream = sys.stderr if stream is None else stream
+    if not use_color(stream):
+        return text
+    return f"{ANSI_BRIGHT_RED}{text}{ANSI_RESET}"
+
+
+def print_error(msg: str) -> None:
+    """Print an error message to stderr in bright red."""
+    print(red(str(msg)), file=sys.stderr)
 
 
 # Local branches that are not release imports – hidden from --list.
@@ -1070,7 +1086,7 @@ def resolve_model(base_url: str, model: str | None, api_key: str | None = None) 
         headers["Authorization"] = f"Bearer {api_key}"
 
     def _die(msg: str) -> None:
-        print(msg, file=sys.stderr)
+        print_error(msg)
         sys.exit(1)
 
     try:
@@ -1171,7 +1187,7 @@ def call_llm(
     }
     def _die(msg: str) -> None:
         """Print a clear error and exit without a long exception chain."""
-        print(msg, file=sys.stderr)
+        print_error(msg)
         sys.exit(1)
 
     try:
@@ -1896,7 +1912,7 @@ def apply_commits(
             print("  committed.")
         # 4) the loop repeats until every planned hunk is committed
     except (Exception, KeyboardInterrupt) as exc:
-        print(f"\nERROR in commit {made + 1}/{len(plans)}: {exc}")
+        print("\n" + red(f"ERROR in commit {made + 1}/{len(plans)}: {exc}", sys.stdout))
         print(f"Reverting the {made} commit(s) created by this run …")
         _rollback(repo, start_head, snapshot)
         where = f"HEAD is back at {start_head[:12]}" if start_head else "the repository is empty again"
@@ -2029,8 +2045,16 @@ def export_archive(
     return output
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
+class _RedArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that prints usage errors in bright red."""
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(2, red(f"{self.prog}: error: {message}") + "\n")
+
+
+def _main() -> None:
+    parser = _RedArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "AI Git Committer – import snapshots into Git with LLM commit messages,\n"
@@ -2513,6 +2537,18 @@ def main() -> None:
         last = current_branch(args.repo)
         if last:
             print(last)
+
+
+def main() -> None:
+    """Run the program; every error message (SystemExit with a text) is shown
+    in bright red on stderr."""
+    try:
+        _main()
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            print_error(exc.code)
+            sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":
