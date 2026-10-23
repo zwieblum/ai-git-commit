@@ -22,9 +22,9 @@ and chronologically ordered by the original file modification times.
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
 | **Output** | Plain text output, no progress bars. |
-| **Branch** | `--branch NAME` checks out or creates the branch before committing. When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. After a successful import the tip of the release branch is also pointed to by a local `main` branch (any previous `main` is removed first) for GitHub compatibility; commits still land on the numbered release branch. |
+| **Branch** | `--branch NAME` checks out or creates the branch before committing (import). When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. After a successful import the tip of the release branch is also pointed to by a local `main` branch (any previous `main` is removed first) for GitHub compatibility; commits still land on the numbered release branch. With `--export`, `--branch NAME` selects the branch to export (overrides the active branch and any NAME given to `--export`). |
 | **Ignored paths** | Bytecode caches (`__pycache__`, `*.pyc`, `*.pyo`) and common backup/editor files (`*~`, `*.bak`, `*.BAK`, `*.orig`, `*.swp`, `*.swo`, `*.tmp`, `#*#`) are never synced into the repository and never appear in commits. Existing copies in the repo are deleted so they show up as deletions. |
-| **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: branch with the newest commit). |
+| **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: the active/checked-out branch; or `--branch NAME`). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
 
 ---
@@ -93,15 +93,18 @@ python ai_git_commit.py \
 
 ### Export mode
 
-Requires only `--export` (and `--repo`, default `./repository`). **Does not** need `--url`, `--model`, `--add`, or `--name`.
+Requires only `--export` (and `--repo`, default `./repository`). **Does not** need `--url`, `--model`, `--add`, or `--name`. Optional: `--branch NAME` to pick the branch to export.
 
 ```bash
-# Last archive (branch with the newest commit)
+# Active (checked-out) branch
 python ai_git_commit.py --repo /path/to/repo --export
 
 # Specific branch or archive name
 python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors
 python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors.zip
+
+# Via --branch (overrides the active branch and any NAME given to --export)
+python ai_git_commit.py --repo /path/to/repo --export --branch 013-llm-errors
 
 # Format and output path
 python ai_git_commit.py --repo /path/to/repo --export 014-clean-llm-err \
@@ -188,11 +191,11 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 | `--add` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
 | `--name` | **yes** | no | Committer identity: `"Name <email@domain>"`; other forms are accepted too, see [Identity formats](#identity-formats) |
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
-| `--branch` | no | no | Branch to commit on (default: archive basename when `--add` is an archive) |
+| `--branch` | no | no | Import: branch to commit on (default: archive basename when `--add` is an archive). Export: branch to export (overrides active branch / `--export` NAME) |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
 | `--describe` | no | no | Text for the branch description tag `desc/<branch>`; overrides the automatic summary from README / conversation… |
 | `--dry-run` | no | no | Plan commits only; do not write |
-| `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = last) |
+| `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = active/checked-out branch; or use `--branch`) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
 | `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
 | `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
