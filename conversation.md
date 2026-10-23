@@ -395,3 +395,13 @@ There is still "all" and "main":
 **Assistant:**
 
 `--list` now hides the non-release branches `main` (GitHub-compatibility pointer at the latest tip) and `all`. Only numbered release branches are shown. The branches themselves still exist in the repo (`main` is kept on purpose; delete a stray `all` with `git branch -D all` if you no longer want it). README updated.
+
+---
+
+**User:**
+
+make error messages be printed in bright red
+
+**Assistant:**
+
+Added `ANSI_BRIGHT_RED`, `red()` and `print_error()`. All error output now goes through them: the LLM-server errors, fatal `SystemExit("…")` messages (caught in a new `main()` wrapper around `_main()`), argparse usage errors (via `_RedArgumentParser`), and the `ERROR in commit …` line. Color is only used when the target stream is a terminal and `NO_COLOR` is not set; piped output is unchanged. `use_color()` now takes an optional stream. README updated.
