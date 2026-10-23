@@ -1961,8 +1961,9 @@ def list_local_branches(repo: Path) -> list[str]:
 def resolve_export_branch(repo: Path, name: str | None) -> str:
     """Resolve which branch to export.
 
-    * ``None`` / ``__LAST__`` → branch that contains the most recent commit
-      (by committer date) among local branches; falls back to current HEAD branch.
+    * ``None`` / ``__LAST__`` → the currently checked-out (active) branch;
+      falls back to the branch with the newest committer date if HEAD is
+      detached or unborn.
     * Otherwise treat *name* as a branch name, or as an archive basename
       (with or without extension) matching ``branch_name_from_archive``.
     """
@@ -1971,7 +1972,11 @@ def resolve_export_branch(repo: Path, name: str | None) -> str:
         raise SystemExit("No local branches found – nothing to export.")
 
     if name is None or name == "__LAST__":
-        # Branch whose tip has the newest committer date
+        # Prefer the active (checked-out) branch
+        active = checked_out_ref(repo)
+        if active and active in branches:
+            return active
+        # Detached HEAD or unborn: fall back to newest tip by committer date
         r = run_git(
             repo,
             "for-each-ref",
@@ -1983,10 +1988,7 @@ def resolve_export_branch(repo: Path, name: str | None) -> str:
         ordered = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
         if ordered:
             return ordered[0]
-        cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
-        if cur.returncode == 0 and cur.stdout.strip() not in ("", "HEAD"):
-            return cur.stdout.strip()
-        raise SystemExit("Could not determine the last branch to export.")
+        raise SystemExit("Could not determine the active branch to export.")
 
     # Exact branch match
     if name in branches:
@@ -2110,6 +2112,7 @@ def _main() -> None:
             "\n"
             "  EXPORT  – recreate a zip/tar from a branch\n"
             "            requires: --export [NAME]\n"
+            "            optional: --branch NAME (overrides active branch / NAME)\n"
             "            does NOT need --url, --model, --add, or --name"
         ),
         epilog=(
@@ -2127,13 +2130,16 @@ def _main() -> None:
             "      --model qwen2.5-coder --add snapshot-2020.zip \\\n"
             "      --name 'Botter <ai@localhost>'\n"
             "\n"
-            "  # Export the last imported archive (newest branch tip)\n"
+            "  # Export the active (checked-out) branch\n"
             "  %(prog)s --repo ./repo --export\n"
             "\n"
             "  # Export a specific branch / archive name\n"
             "  %(prog)s --repo ./repo --export 013-llm-errors\n"
             "  %(prog)s --repo ./repo --export 013-llm-errors.zip \\\n"
             "      --export-format tar.gz --export-output /tmp/out.tar.gz\n"
+            "\n"
+            "  # Export via --branch (overrides active branch and --export NAME)\n"
+            "  %(prog)s --repo ./repo --export --branch 013-llm-errors\n"
             "\n"
             "  # List all branches (like 'git branch --all'); needs no other option\n"
             "  %(prog)s --repo ./repo --list\n"
@@ -2203,7 +2209,9 @@ def _main() -> None:
         "--branch",
         default=None,
         metavar="NAME",
-        help="Branch to commit on (default: archive basename if --add is an archive)",
+        help="Branch to commit on (import; default: archive basename if --add is "
+        "an archive) or to export (with --export; overrides the active branch "
+        "and any NAME given to --export)",
     )
     import_opts.add_argument(
         "--mention-archive",
@@ -2267,8 +2275,9 @@ def _main() -> None:
         default=None,
         metavar="NAME",
         help="Export mode: recreate archive from branch. "
-        "Omit NAME for the branch with the newest commit; "
-        "NAME may be a branch or archive basename (e.g. 013-llm-errors[.zip])",
+        "Omit NAME to export the active (checked-out) branch; "
+        "NAME may be a branch or archive basename (e.g. 013-llm-errors[.zip]). "
+        "With --branch NAME, that branch is exported instead",
     )
     export_opts.add_argument(
         "--export-format",
@@ -2365,9 +2374,13 @@ def _main() -> None:
     # ----- export mode -----
     if args.export is not None:
         require_git_repo(args.repo)  # validate without auto-creating
-        branch = resolve_export_branch(
-            args.repo, None if args.export == "__LAST__" else args.export
-        )
+        # --branch NAME wins; else --export NAME; else the active (checked-out) branch
+        if args.branch is not None:
+            branch = resolve_export_branch(args.repo, args.branch)
+        else:
+            branch = resolve_export_branch(
+                args.repo, None if args.export == "__LAST__" else args.export
+            )
         export_archive(
             args.repo,
             branch,
