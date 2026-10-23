@@ -452,3 +452,5 @@ To see all branches use `--list` (see *List mode*).
 ### Export wrapper directory
 
 By default `--export` omits the `<branch>/` prefix so the archive contains the files directly at its root (`--strip`, on by default). `--no-strip` restores the previous layout with a single `<branch>/` top-level directory. Both options are only valid together with `--export`. Re-importing either layout works (the importer only strips wrappers if there are any).
+
+**Hunk staging.** Hunk commits are staged by writing the blob and updating the index directly (not with `git add`), so a hunk that keeps the file size (e.g. a typo fix) is staged even on file systems with unreliable ctime/inode data.
