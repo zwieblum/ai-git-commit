@@ -1779,6 +1779,37 @@ def _write_file(repo: Path, path: str, data: bytes, mtime: float | None) -> None
         os.utime(full, (mtime, mtime))
 
 
+def _stage_bytes(repo: Path, path: str, data: bytes) -> None:
+    """Stage *data* as the new content of *path* without relying on stat data.
+
+    ``git add`` skips a file whose size and mtime match its index entry.  Hunk
+    commits rewrite the file with the same (source) mtime each time, so an
+    edit that keeps the file size (e.g. a typo fix) was silently not staged
+    ("nothing staged") on file systems with weak ctime/inode data.  Writing the
+    blob and updating the index directly always stages the exact content.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+        input=data, capture_output=True,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"git hash-object failed for {path}: {r.stderr.decode(errors='replace').strip()}")
+    sha = r.stdout.decode().strip()
+
+    mode = ""
+    ls = run_git(repo, "ls-files", "-s", "--", path, check=False).stdout.split()
+    if ls:
+        mode = ls[0]
+    elif has_commits(repo):
+        lt = run_git(repo, "ls-tree", "HEAD", "--", path, check=False).stdout.split()
+        if lt:
+            mode = lt[0]
+    if mode not in ("100644", "100755"):
+        full = repo / path
+        mode = "100755" if full.exists() and os.access(full, os.X_OK) else "100644"
+    run_git(repo, "update-index", "--add", "--cacheinfo", f"{mode},{sha},{path}")
+
+
 def _rollback(
     repo: Path,
     start_head: str | None,
@@ -1868,7 +1899,7 @@ def apply_commits(
                             f"{path}: after the last hunk the file differs from the synced source"
                         )
                     _write_file(repo, path, current, mtime)
-                    run_git(repo, "add", "--", path)
+                    _stage_bytes(repo, path, current)
             else:
                 # Full-file staging (small files / deletions)
                 to_add = []
