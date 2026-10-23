@@ -405,3 +405,13 @@ make error messages be printed in bright red
 **Assistant:**
 
 Added `ANSI_BRIGHT_RED`, `red()` and `print_error()`. All error output now goes through them: the LLM-server errors, fatal `SystemExit("…")` messages (caught in a new `main()` wrapper around `_main()`), argparse usage errors (via `_RedArgumentParser`), and the `ERROR in commit …` line. Color is only used when the target stream is a terminal and `NO_COLOR` is not set; piped output is unchanged. `use_color()` now takes an optional stream. README updated.
+
+---
+
+**User:**
+
+I get this error - fix it: [import of jitsi-local-018-subcommands.zip aborted: commit 6/7 "nothing staged – skipping", then "ERROR in commit 6/7: install.sh: after the last hunk the file differs from the synced source"; all commits reverted]
+
+**Assistant:**
+
+Cause: for hunk commits the file is rewritten with the source mtime each time. `git add` skips a file whose size and mtime match its index entry, so a same-size edit (e.g. a typo fix) was not staged ("nothing staged"), yet the hunk counted as applied; the next hunk then started from a HEAD without it and the final check failed. Hunk files are now staged with `git hash-object -w` plus `git update-index --cacheinfo` (mode taken from the index/HEAD), which never depends on stat data. Reproduced with `core.trustctime=false` and `core.checkStat=minimal` and three same-size hunks: the old staging aborted, the new one commits all three. README updated.
