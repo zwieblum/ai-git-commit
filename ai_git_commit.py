@@ -777,7 +777,7 @@ def tag_name_from_archive(path: Path) -> str:
         if lower.endswith(suffix):
             name = name[: -len(suffix)]
             break
-    # Sanitise for Git branch rules: no spaces, no leading '-', etc.
+    # Sanitise for Git ref rules: no spaces, no leading '-', etc.
     name = name.strip().replace(" ", "-")
     name = re.sub(r"[~^:?*\[\\]+", "-", name)
     name = re.sub(r"-+", "-", name).strip("-")
