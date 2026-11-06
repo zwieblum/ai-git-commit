@@ -2096,14 +2096,14 @@ def _main() -> None:
             "            requires: --url --add --name\n"
             "            optional: --model (default: first/active model from GET /v1/models)\n"
             "\n"
-            "  EXPORT  – recreate a zip/tar from a branch\n"
+            "  EXPORT  – recreate a zip/tar from a release tag (default: tip of main)\n"
             "            requires: --export [NAME]\n"
-            "            optional: --branch NAME (overrides active branch / NAME)\n"
+            "            optional: --tag NAME (overrides NAME)\n"
             "            does NOT need --url, --model, --add, or --name"
         ),
         epilog=(
             "examples:\n"
-            "  # Import an archive (creates branch from archive name)\n"
+            "  # Import an archive (commits on main, tag = archive name)\n"
             "  %(prog)s --repo ./repo --url http://localhost:8080/v1 \\\n"
             "      --add snapshot-2020.zip --name 'Botter <ai@localhost>'\n"
             "\n"
