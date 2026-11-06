@@ -1,0 +1,26 @@
+# Changelog
+
+© Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz
+
+## 052 - use-tags-not-branch (2026-11-06)
+
+Changed: the program now uses tags instead of branches.
+
+- All commits go on one branch. Its name is `main` (GitHub compatible).
+- Each import creates a release tag on the new tip of `main`. The tag name is the archive name without extension, or the value of `--tag NAME`.
+- The release tag is an annotated tag. Its message is the description of the version. It replaces the old `desc/<branch>` tag. Without a description the tag is a lightweight tag.
+- A new import always continues on the tip of `main`. The history is linear.
+- An import is refused when the release tag exists already.
+- `--branch` is removed. Use `--tag NAME`. The program stops with a clear error when `--branch` is given.
+- `--list` shows the release tags with their descriptions. The tags at the checked-out commit are marked with `*`. The special handling of the branch `all` is removed.
+- `--export [NAME]` exports a release tag. Without NAME it exports the tip of `main`.
+- `--revert` deletes the newest release tag and moves `main` back to the previous release tag. It refuses to run when only one tag exists, when `main` is not checked out, or when `main` is not at that tag.
+- A failed import (or an import without commits) removes the synced files from the working tree. Before, this happened only for a newly created branch.
+- An empty repository gets `main` as its first branch. A repository with commits but without `main` is refused with the rename command.
+- The archive no longer contains `.gitignore` (dot-files are not shipped).
+- The header of `LICENSE` no longer contains a copyright line. The file now holds the GPL3 text only.
+- Added `CHANGELOG`. Updated `README.md` (release model, GitHub publishing, arguments, architecture) and `conversation.md`.
+
+## 051 - export-active-br
+
+Earlier versions: see `conversation.md` for the history of changes before this file existed.
