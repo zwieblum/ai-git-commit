@@ -2230,9 +2230,9 @@ def _main() -> None:
     list_opts.add_argument(
         "--list",
         action="store_true",
-        help="Print all branches of the repository like 'git branch --all' "
-        "and exit.  This is the default when neither --add nor --export is "
-        "given.  (No branch listing is shown after an import or export.)",
+        help="Print the release tags of the repository with their "
+        "descriptions and exit.  This is the default when neither --add nor "
+        "--export is given.  (No listing is shown after an import or export.)",
     )
     revert_opts = parser.add_argument_group(
         "revert mode (needs no other option; cannot be combined with --add / --export)"
