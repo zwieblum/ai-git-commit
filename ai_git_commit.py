@@ -265,40 +265,51 @@ def print_error(msg: str) -> None:
     print(red(str(msg)), file=sys.stderr)
 
 
-# Local branches that are not release imports – hidden from --list.
-# ``main`` is the GitHub-compatibility pointer; ``all`` is a common stray name.
-LIST_HIDDEN_BRANCHES = frozenset({"main", "all"})
+def list_release_tags(repo: Path) -> list[str]:
+    """Return all tag names (the release tags), sorted by name."""
+    r = run_git(repo, "for-each-ref", "--sort=refname", "--format=%(refname)",
+                "refs/tags/", check=False)
+    prefix = "refs/tags/"
+    return [ln.strip()[len(prefix):] for ln in r.stdout.splitlines()
+            if ln.strip().startswith(prefix)]
 
 
-def list_branches(repo: Path) -> None:
-    """Print local release branches (not remote-tracking), plus short descriptions.
+def tag_commits(repo: Path) -> dict[str, str]:
+    """Map tag name → sha of the commit the tag points to."""
+    r = run_git(
+        repo, "for-each-ref", "refs/tags/",
+        "--format=%(refname)%09%(objectname)%09%(*objectname)", check=False,
+    )
+    out: dict[str, str] = {}
+    prefix = "refs/tags/"
+    for line in r.stdout.splitlines():
+        ref, _, rest = line.partition("\t")
+        obj, _, peeled = rest.partition("\t")
+        if ref.startswith(prefix):
+            out[ref[len(prefix):]] = peeled or obj
+    return out
 
-    Omits remote-tracking refs and the non-release branches ``main`` and ``all``
-    (``main`` is only a GitHub-compatibility pointer at the latest tip).
+
+def list_tags(repo: Path) -> None:
+    """Print the release tags, plus short descriptions.
+
+    The tags that point at the checked-out commit are marked with ``*``.
     """
-    r = run_git(repo, "branch", "--no-color", check=False)
-    if r.returncode != 0:
-        raise SystemExit(f"Could not list branches: {r.stderr.strip()}")
-    if not r.stdout.strip():
-        print("No branches found.")
+    tags = list_release_tags(repo)
+    if not tags:
+        print("No release tags found.")
         return
-    desc = branch_descriptions(repo)
-    lines = []
-    for ln in r.stdout.rstrip("\n").splitlines():
-        # Lines look like "  name" or "* name"
-        name = ln[2:].strip() if len(ln) >= 2 else ln.strip()
-        if name in LIST_HIDDEN_BRANCHES:
-            continue
-        lines.append(ln)
-    if not lines:
-        print("No branches found.")
-        return
+    desc = tag_descriptions(repo)
+    head = run_git(repo, "rev-parse", "-q", "--verify", "HEAD^{commit}",
+                   check=False).stdout.strip()
+    commits = tag_commits(repo)
+    lines = [("* " if head and commits.get(t) == head else "  ") + t for t in tags]
     width = max((len(ln) for ln in lines if ln[2:] in desc), default=0)
     color = use_color()
     for ln in lines:
-        text = desc.get(ln[2:])  # only plain local branch lines match
+        text = desc.get(ln[2:])
         name = ln.ljust(width) if text else ln  # pad BEFORE adding escape codes
-        if color and ln.startswith("* "):  # the checked-out branch
+        if color and ln.startswith("* "):  # the checked-out release
             name = f"{ANSI_LIGHT_GREEN}{name}{ANSI_RESET}"
         if text:
             text = f"{ANSI_GRAY}{text}{ANSI_RESET}" if color else text
