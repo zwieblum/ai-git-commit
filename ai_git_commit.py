@@ -2192,12 +2192,17 @@ def _main() -> None:
         help="API key (or env OPENAI_API_KEY); often unused by local servers",
     )
     import_opts.add_argument(
-        "--branch",
+        "--tag",
         default=None,
         metavar="NAME",
-        help="Branch to commit on (import; default: archive basename if --add is "
-        "an archive) or to export (with --export; overrides the active branch "
-        "and any NAME given to --export)",
+        help="Release tag (import: created on the new tip of main; default: archive "
+        "basename if --add is an archive; the tag must not exist yet) or release "
+        "to export (with --export; overrides any NAME given to --export)",
+    )
+    import_opts.add_argument(
+        "--branch",
+        default=None,
+        help=argparse.SUPPRESS,  # removed option: gives a clear error
     )
     import_opts.add_argument(
         "--mention-archive",
