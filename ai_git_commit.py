@@ -2213,8 +2213,8 @@ def _main() -> None:
         "--describe",
         default=None,
         metavar="TEXT",
-        help="Description stored as annotated tag 'desc/<branch>' on the branch "
-        "tip after an import.  Overrides the automatic summary, which is made "
+        help="Description stored as the message of the release tag after an "
+        "import.  Overrides the automatic summary, which is made "
         "by the model from conversation.md (or README…, CHANGELOG…) when such "
         "a file is present in the repository",
     )
