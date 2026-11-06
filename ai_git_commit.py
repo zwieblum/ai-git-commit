@@ -641,33 +641,41 @@ def ensure_git_repo(repo: Path) -> None:
         print(f"  initialized empty Git repository in {repo}")
 
 
-def latest_release_branch(repo: Path, exclude: str | None = None) -> str | None:
-    """Return the branch holding the most recent release.
+def _tags_newest_first(repo: Path) -> list[str]:
+    """Tag names ordered best-first.
 
-    Release branches are named like ``017-export-model`` (derived from archive
-    names).  The highest leading number wins; if no branch has a numeric
-    prefix, the branch whose tip has the newest committer date is used.
-    *exclude* leaves one branch out of the choice.  The GitHub-compatibility
-    branch ``main`` is never considered a release branch.
+    Release tags are named like ``017-export-model`` (derived from archive
+    names).  Tags with a leading number come first (highest number first); the
+    other tags follow, newest first.
     """
     r = run_git(
-        repo, "for-each-ref", "--sort=-committerdate",
-        "--format=%(refname:short)", "refs/heads/", check=False,
+        repo, "for-each-ref", "--sort=-creatordate", "--format=%(refname)",
+        "refs/tags/", check=False,
     )
-    ordered = [
-        ln.strip() for ln in r.stdout.splitlines()
-        if ln.strip() and ln.strip() != exclude and ln.strip() != "main"
-    ]
-    if not ordered:
-        return None
-    numbered = []
-    for b in ordered:
-        m = re.match(r"^(\d+)", b)
+    prefix = "refs/tags/"
+    names = [ln.strip()[len(prefix):] for ln in r.stdout.splitlines()
+             if ln.strip().startswith(prefix)]
+    numbered: list[tuple[int, str]] = []
+    others: list[str] = []
+    for n in names:
+        m = re.match(r"^(\d+)", n)
         if m:
-            numbered.append((int(m.group(1)), b))
-    if numbered:
-        return max(numbered, key=lambda t: t[0])[1]
-    return ordered[0]
+            numbered.append((int(m.group(1)), n))
+        else:
+            others.append(n)
+    numbered.sort(key=lambda t: -t[0])  # stable: same number keeps date order
+    return [n for _, n in numbered] + others
+
+
+def latest_release_tag(
+    repo: Path, exclude: str | None = None, among: set[str] | None = None,
+) -> str | None:
+    """Return the tag of the most recent release (highest leading number, else
+    newest).  *exclude* leaves one tag out; *among* limits the choice."""
+    for n in _tags_newest_first(repo):
+        if n != exclude and (among is None or n in among):
+            return n
+    return None
 
 
 def branch_exists(repo: Path, branch: str) -> bool:
