@@ -425,3 +425,25 @@ read the archive. when "--export" is used, ist must export the active branch. if
 
 `--export` with no NAME now exports the active (checked-out) branch instead of the branch with the newest committer date. If `--branch NAME` is also given, that branch is exported (it overrides both the active branch and any NAME passed to `--export`). `resolve_export_branch` prefers `checked_out_ref`; help text, epilog, and README were updated accordingly.
 
+
+---
+
+**User:**
+
+* please change this program to use tags instead of branches. the last branch must be named "main" for github compatibility
+
+**Assistant:**
+
+I read the code and made a plan. One branch only: `main`. Each import creates a release tag on the new tip. The tag is annotated and holds the description. `--branch` becomes `--tag`. `--list`, `--export` and `--revert` work on tags. I asked three questions and waited for approval.
+
+---
+
+**User:**
+
+* 1) no (no alias for `--branch`)
+* 2) no (no migration of old repositories)
+* 3) remove it (the special handling of the branch `all`)
+
+**Assistant:**
+
+The plan was approved. Changes made in `ai_git_commit.py`: all commits go on `main`; the release tag (archive name or `--tag NAME`) is created on the new tip; an existing tag refuses the import; `--branch` stops with an error; `--list` prints tags with descriptions; `--export` reads a tag (default: tip of `main`); `--revert` deletes the newest tag and moves `main` back; a failed import restores the working tree; `ensure_github_main`, `ensure_branch`, `discard_created_branch` and the `all` handling are removed. I tested import, list, export, revert, errors, dry-run, directory source and detached HEAD with a mock model server. `README.md` and `CHANGELOG` are updated.
