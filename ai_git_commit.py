@@ -2026,21 +2026,21 @@ def export_archive(
     # path would otherwise be interpreted by ``git -C <repo> archive`` relative
     # to the repository, i.e. the archive would end up inside the repo.
     if output is None:
-        output = Path.cwd() / f"{branch}{ext}"
+        output = Path.cwd() / f"{label}{ext}"
     else:
         output = output.expanduser().resolve()
         if output.is_dir():
-            output = output / f"{branch}{ext}"
+            output = output / f"{label}{ext}"
 
     # Prefix so unpacking creates a single top-level directory (matches import
     # strip).  strip (the default) drops it: files are stored at the archive root.
     if strip:
         prefix = ""
     elif prefix is None:
-        prefix = f"{branch}/"
+        prefix = f"{label}/"
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Exporting branch '{branch}' → {output} ({git_format}) …")
+    print(f"Exporting '{label}' → {output} ({git_format}) …")
     cmd = [
         "git",
         "-C",
