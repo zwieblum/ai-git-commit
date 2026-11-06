@@ -2251,8 +2251,8 @@ def _main() -> None:
     cleanup_opts.add_argument(
         "--cleanup",
         action="store_true",
-        help="Permanently delete all commits and objects that no branch "
-        "reaches any more (e.g. those of reverted branches): expires the "
+        help="Permanently delete all commits and objects that no branch or "
+        "tag reaches any more (e.g. those of reverted releases): expires the "
         "reflog and runs 'git gc --prune=now'.  Runs WITHOUT confirmation and "
         "cannot be undone.",
     )
