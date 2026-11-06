@@ -2439,18 +2439,14 @@ def _main() -> None:
         )
 
     # Make sure the model really answers before the repository is touched
-    # (branch creation, sync and commits all come after this point).
+    # (checkout, sync and commits all come after this point).
     check_model(args.url, args.model, args.api_key)
 
-    # Branch selection: explicit --branch wins; otherwise derive from archive name
-    branch = args.branch
-    if branch is None and is_archive(args.add.expanduser().resolve()):
-        branch = branch_name_from_archive(args.add)
-        print(f"Archive detected – using branch name '{branch}' (override with --branch)")
-    created_branch = False
-    previous_ref = checked_out_ref(args.repo)
-    if branch:
-        created_branch = ensure_branch(args.repo, branch)
+    if tag and tag_derived:
+        print(f"Archive detected – using release tag '{tag}' (override with --tag)")
+    elif not tag:
+        print("Note: no release tag will be created (use --tag NAME for a directory source).")
+    ensure_main_branch(args.repo)
 
     # Safety: the sync step runs "rsync --delete" into the repo, so a source
     # (archive or directory) located inside the repo would be deleted by it.
