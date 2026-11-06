@@ -500,22 +500,28 @@ def normalize_description(text: str) -> str:
     return f"{short}\n\n{body}" if body else short
 
 
-def tag_branch_description(
-    repo: Path, branch: str, description: str, author_name: str, author_email: str,
+def tag_release(
+    repo: Path, tag: str, description: str, author_name: str, author_email: str,
 ) -> None:
-    """Create (or replace) the annotated tag ``desc/<branch>`` on the branch tip."""
+    """Create the release tag *tag* on the tip of ``main``.
+
+    With a description the tag is an annotated tag (the description is its
+    message); without a description it is a lightweight tag.
+    """
     env = os.environ.copy()
     env.update(GIT_COMMITTER_NAME=author_name, GIT_COMMITTER_EMAIL=author_email,
                GIT_AUTHOR_NAME=author_name, GIT_AUTHOR_EMAIL=author_email)
-    tag = description_tag_name(branch)
-    r = subprocess.run(
-        ["git", "-C", str(repo), "tag", "-a", "-f", "-F", "-", tag, f"refs/heads/{branch}"],
-        input=description + "\n", text=True, capture_output=True, env=env,
-    )
+    if description:
+        cmd = ["git", "-C", str(repo), "tag", "-a", "-F", "-", tag, "HEAD"]
+        stdin = description + "\n"
+    else:
+        cmd = ["git", "-C", str(repo), "tag", tag, "HEAD"]
+        stdin = None
+    r = subprocess.run(cmd, input=stdin, text=True, capture_output=True, env=env)
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip())
-    first = description.splitlines()[0] if description else ""
-    print(f"Tagged branch tip as '{tag}': {first}")
+    first = description.splitlines()[0] if description else "(no description)"
+    print(f"Created release tag '{tag}': {first}")
 
 
 def _repo_size_kib(repo: Path) -> int:
