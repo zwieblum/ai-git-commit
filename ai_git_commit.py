@@ -332,11 +332,6 @@ MAX_DESCRIPTION_WORDS = 170
 MAX_PROMPT_CHARS = 12000
 
 
-def description_tag_name(branch: str) -> str:
-    """Name of the annotated tag that carries the description of *branch*."""
-    return f"{TAG_PREFIX}{branch}"
-
-
 def find_description_doc(repo: Path, ref: str = "HEAD") -> str | None:
     """Return the best description document in the root of *ref*, or None.
 
