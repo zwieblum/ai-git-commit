@@ -2535,51 +2535,41 @@ def _main() -> None:
             print("\nDone.")
             committed = True
 
-            # Description of this version as annotated tag on the branch tip.
-            # Failures here never undo the (already finished) commits.
-            tip_branch = current_branch(args.repo)
-            try:
-                description = (args.describe or "").strip()
-                if not description:
-                    doc = find_description_doc(args.repo)
-                    if doc:
-                        print(f"Summarizing the progress from '{doc}' for the branch description …")
-                        description = summarize_progress(
-                            args.repo, doc, start_head, args.url, args.model, args.api_key
-                        )
-                        if not description:
-                            print(f"No description derivable from the changes of '{doc}' (unchanged, "
-                                  "or only about the document itself) – no branch description tag "
-                                  "(use --describe TEXT to set one).")
-                    else:
-                        print("No conversation.md / README found – no branch description tag "
-                              "(use --describe TEXT to set one).")
-                if description and tip_branch and tip_branch != "HEAD":
-                    tag_branch_description(
-                        args.repo, tip_branch, description, author_name, author_email
-                    )
-            except Exception as exc:  # noqa: BLE001
-                print(f"warning: branch description tag not created: {exc}", file=sys.stderr)
-
-            # GitHub compatibility: remove any existing "main" and recreate it
-            # pointing at the tip of the release branch that just received commits.
-            if tip_branch and tip_branch != "HEAD":
+            # Release tag with the description of this version on the tip of
+            # main.  Failures here never undo the (already finished) commits.
+            if tag:
                 try:
-                    ensure_github_main(args.repo, tip_branch)
+                    description = (args.describe or "").strip()
+                    if not description:
+                        doc = find_description_doc(args.repo)
+                        if doc:
+                            print(f"Summarizing the progress from '{doc}' for the release description …")
+                            description = summarize_progress(
+                                args.repo, doc, start_head, args.url, args.model, args.api_key
+                            )
+                            if not description:
+                                print(f"No description derivable from the changes of '{doc}' (unchanged, "
+                                      "or only about the document itself) – the release tag gets "
+                                      "no description (use --describe TEXT to set one).")
+                        else:
+                            print("No conversation.md / README found – the release tag gets "
+                                  "no description (use --describe TEXT to set one).")
+                    tag_release(args.repo, tag, description, author_name, author_email)
+                    release_tag = tag
                 except Exception as exc:  # noqa: BLE001
-                    print(f"warning: could not update 'main' branch: {exc}", file=sys.stderr)
+                    print(f"warning: release tag '{tag}' not created: {exc}\n"
+                          f"  create it with: git -C {args.repo} tag {tag} HEAD",
+                          file=sys.stderr)
     finally:
-        # A branch created for this import must not survive without commits
-        # (failure and rollback, dry-run, "no changes", empty plan).
-        if created_branch and not committed:
-            discard_created_branch(args.repo, branch, previous_ref, synced)
+        # An import that ended without a commit (failure and rollback,
+        # dry-run, "no changes", empty plan) must not leave synced files behind.
+        if synced and not committed:
+            discard_failed_sync(args.repo)
 
-    # Only the name of the branch the commits went to; printed after the
-    # temporary-directory cleanup so it really is the last line of output.
-    if committed:
-        last = current_branch(args.repo)
-        if last:
-            print(last)
+    # Only the name of the release tag; printed after the temporary-directory
+    # cleanup so it really is the last line of output.
+    if release_tag:
+        print(release_tag)
 
 
 def main() -> None:
