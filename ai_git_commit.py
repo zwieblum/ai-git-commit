@@ -2355,32 +2355,33 @@ def _main() -> None:
 
     # ----- revert mode -----
     if args.revert:
-        note_ignored("reverting the last branch")
-        revert_last_branch(args.repo)
+        note_ignored("reverting the last release")
+        revert_last_release(args.repo)
         return
 
     # ----- list mode -----
     if args.list:
         if args.export is not None or args.add is not None:
             parser.error("--list cannot be combined with --export or --add")
-        note_ignored("listing branches")
+        note_ignored("listing release tags")
         require_git_repo(args.repo)
-        list_branches(args.repo)
+        list_tags(args.repo)
         return
 
     # ----- export mode -----
     if args.export is not None:
         require_git_repo(args.repo)  # validate without auto-creating
-        # --branch NAME wins; else --export NAME; else the active (checked-out) branch
-        if args.branch is not None:
-            branch = resolve_export_branch(args.repo, args.branch)
+        # --tag NAME wins; else --export NAME; else the tip of main
+        if args.tag is not None:
+            ref, label = resolve_export_ref(args.repo, args.tag)
         else:
-            branch = resolve_export_branch(
+            ref, label = resolve_export_ref(
                 args.repo, None if args.export == "__LAST__" else args.export
             )
         export_archive(
             args.repo,
-            branch,
+            ref,
+            label,
             output=args.export_output,
             fmt=args.export_format,
             strip=args.strip,
