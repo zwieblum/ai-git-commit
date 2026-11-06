@@ -553,57 +553,71 @@ def cleanup_repository(repo: Path) -> None:
     print(f"Repository size: {before} KiB → {after} KiB.")
 
 
-def revert_last_branch(repo: Path) -> None:
-    """Remove the last branch (see ``latest_release_branch``) from *repo*.
+def revert_last_release(repo: Path) -> None:
+    """Remove the last release (see ``latest_release_tag``) from *repo*.
 
-    * Refuses to remove the only remaining branch.
+    * Refuses to remove the only remaining release tag.
     * Refuses when the working tree has uncommitted/untracked changes.
-    * If the branch is checked out, the previous branch is checked out first.
-    * Prints the tip commit so the branch can be restored with
-      ``git branch NAME SHA``.
+    * Refuses when ``main`` is not checked out or not at the tip of that tag.
+    * Deletes the tag and moves ``main`` back to the previous release tag.
+    * Prints the commands that restore the removed release.
     """
     require_git_repo(repo)
-    branches = list_local_branches(repo)
-    if not branches:
-        raise SystemExit("No local branches found – nothing to revert.")
-    if len(branches) == 1:
+    tags = list_release_tags(repo)
+    if not tags:
+        raise SystemExit("No release tags found – nothing to revert.")
+    if len(tags) == 1:
         raise SystemExit(
-            f"Only one branch ('{branches[0]}') exists – refusing to remove it."
+            f"Only one release tag ('{tags[0]}') exists – refusing to remove it."
         )
-    last = latest_release_branch(repo)
-    if not last:
-        raise SystemExit("Could not determine the last branch.")
+    last = latest_release_tag(repo)
+    previous = latest_release_tag(repo, exclude=last)
+    if not last or not previous:
+        raise SystemExit("Could not determine the last release tag.")
 
+    now_on = current_branch(repo)
+    if now_on != MAIN_BRANCH:
+        raise SystemExit(
+            f"The checked-out branch is '{now_on}', not '{MAIN_BRANCH}'.\n"
+            f"Check out '{MAIN_BRANCH}' first:  git -C {repo} checkout {MAIN_BRANCH}"
+        )
     if run_git(repo, "status", "--porcelain", check=False).stdout.strip():
         raise SystemExit(
             f"Working tree of {repo} has uncommitted or untracked changes "
-            f"(e.g. from a failed import) – refusing to switch branches.\n"
+            f"(e.g. from a failed import) – refusing to move '{MAIN_BRANCH}'.\n"
             f"Discard them first if you are sure:\n"
             f"  git -C {repo} reset --hard && git -C {repo} clean -fd"
         )
 
-    sha = run_git(repo, "rev-parse", f"refs/heads/{last}").stdout.strip()
-    now_on = current_branch(repo)
-    if now_on == last:
-        fallback = latest_release_branch(repo, exclude=last)
-        r = run_git(repo, "checkout", "--quiet", fallback, check=False)
-        if r.returncode != 0:
-            raise SystemExit(
-                f"Could not switch to '{fallback}' before removing '{last}':\n"
-                f"{r.stderr.strip()}"
-            )
-        now_on = fallback
-    r = run_git(repo, "branch", "-D", last, check=False)
-    if r.returncode != 0:
-        raise SystemExit(f"Could not remove branch '{last}':\n{r.stderr.strip()}")
+    def rev(ref: str) -> str:
+        return run_git(repo, "rev-parse", ref).stdout.strip()
 
-    print(f"Removed branch '{last}' (was {sha[:12]}); now on '{now_on}'.")
-    print(f"Restore with: git -C {repo} branch {last} {sha}")
-    tag = description_tag_name(last)
-    if run_git(repo, "rev-parse", "-q", "--verify", f"refs/tags/{tag}", check=False).returncode == 0:
-        # a leftover tag would keep the removed commits reachable
-        run_git(repo, "tag", "-d", tag, check=False)
-        print(f"Removed its description tag '{tag}'.")
+    last_commit = rev(f"refs/tags/{last}^{{commit}}")
+    prev_commit = rev(f"refs/tags/{previous}^{{commit}}")
+    tag_object = rev(f"refs/tags/{last}")
+    if rev("HEAD") != last_commit:
+        raise SystemExit(
+            f"'{MAIN_BRANCH}' is not at the tip of release '{last}' "
+            f"({rev('HEAD')[:12]} instead of {last_commit[:12]}) – refusing to move it."
+        )
+    if run_git(repo, "merge-base", "--is-ancestor", prev_commit, last_commit,
+               check=False).returncode != 0:
+        raise SystemExit(
+            f"Release '{previous}' is not an ancestor of '{last}' – refusing to move "
+            f"'{MAIN_BRANCH}'."
+        )
+
+    r = run_git(repo, "reset", "--hard", "-q", prev_commit, check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"Could not move '{MAIN_BRANCH}' back to '{previous}':\n{r.stderr.strip()}")
+    r = run_git(repo, "tag", "-d", last, check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"Could not remove release tag '{last}':\n{r.stderr.strip()}")
+
+    print(f"Removed release tag '{last}' (was {last_commit[:12]}); "
+          f"'{MAIN_BRANCH}' is back at '{previous}' ({prev_commit[:12]}).")
+    print(f"Restore with: git -C {repo} reset --hard {last_commit} "
+          f"&& git -C {repo} tag {last} {tag_object}")
 
 
 def ensure_git_repo(repo: Path) -> None:
