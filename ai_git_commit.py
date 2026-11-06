@@ -2330,7 +2330,7 @@ def _main() -> None:
             flag
             for flag, dest in (
                 ("--url", "url"), ("--model", "model"), ("--name", "name"),
-                ("--branch", "branch"), ("--mention-archive", "mention_archive"),
+                ("--tag", "tag"), ("--mention-archive", "mention_archive"),
                 ("--describe", "describe"), ("--dry-run", "dry_run"),
             )
             if getattr(args, dest) != parser.get_default(dest)
