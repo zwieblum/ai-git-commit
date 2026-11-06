@@ -323,9 +323,8 @@ def current_branch(repo: Path) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-TAG_PREFIX = "desc/"
 # Documents that describe a release, in priority order (file stem, any extension).
-# README first so branch descriptions summarize product changes; conversation is fallback.
+# README first so release descriptions summarize product changes; conversation is fallback.
 DESCRIPTION_DOC_STEMS = ("readme", "conversation", "changelog", "changes", "history", "notes")
 SHORT_DESCRIPTION_WORDS = 50   # target length of the first line shown by --list
 MAX_SHORT_DESCRIPTION_WORDS = 70
