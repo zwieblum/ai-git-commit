@@ -685,113 +685,69 @@ def branch_exists(repo: Path, branch: str) -> bool:
     ).returncode == 0
 
 
-def ensure_github_main(repo: Path, tip_branch: str) -> None:
-    """Make local branch ``main`` point at the tip of *tip_branch*.
+def tag_exists(repo: Path, tag: str) -> bool:
+    """True if a tag named *tag* exists."""
+    return run_git(
+        repo, "show-ref", "--verify", "--quiet", f"refs/tags/{tag}", check=False
+    ).returncode == 0
 
-    For GitHub compatibility: any existing ``main`` is removed and recreated
-    at the same commit as *tip_branch*.  HEAD stays on *tip_branch* (the
-    release branch that received the commits).  No-op when *tip_branch* is
-    already ``main``.
+
+def validate_tag_name(tag: str) -> str:
+    """Return the stripped tag name, or exit when Git would refuse it."""
+    tag = tag.strip()
+    if not tag:
+        raise SystemExit("--tag must not be empty")
+    if re.search(r"[\s~^:?*\[\\]", tag) or tag.startswith("-"):
+        raise SystemExit(f"Invalid tag name: {tag!r}")
+    if tag == MAIN_BRANCH:
+        raise SystemExit(f"'{MAIN_BRANCH}' is the branch name and cannot be a release tag.")
+    r = subprocess.run(["git", "check-ref-format", f"refs/tags/{tag}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"Invalid tag name: {tag!r}")
+    return tag
+
+
+def ensure_main_branch(repo: Path) -> None:
+    """Make sure the checked-out branch is ``main``.
+
+    * Empty repository → HEAD is set to the (unborn) branch ``main``.
+    * ``main`` already checked out → nothing to do.
+    * Another branch or a detached HEAD → ``main`` is checked out.
+    * No branch ``main`` in a repository with commits → error.
     """
-    if not tip_branch or tip_branch == "main":
-        return
-    tip_sha = run_git(repo, "rev-parse", tip_branch).stdout.strip()
-    if not tip_sha:
+    if not has_commits(repo):
+        run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{MAIN_BRANCH}")
         return
     cur = current_branch(repo)
-    if branch_exists(repo, "main"):
-        if cur == "main":
-            run_git(repo, "checkout", "-q", tip_branch)
-            cur = tip_branch
-        run_git(repo, "branch", "-D", "main")
-        print("Removed existing branch 'main'")
-    run_git(repo, "branch", "main", tip_sha)
-    print(
-        f"Created branch 'main' at tip of '{tip_branch}' "
-        f"({tip_sha[:12]}) for GitHub compatibility"
-    )
-    # Stay on the release branch
-    if cur != tip_branch and current_branch(repo) != tip_branch:
-        run_git(repo, "checkout", "-q", tip_branch)
+    if cur == MAIN_BRANCH:
+        return
+    if not branch_exists(repo, MAIN_BRANCH):
+        raise SystemExit(
+            f"The repository {repo} has no branch '{MAIN_BRANCH}' (checked out: '{cur}').\n"
+            f"All commits must go on '{MAIN_BRANCH}'.  Rename your branch first, e.g.:\n"
+            f"  git -C {repo} branch -m {cur if cur != 'HEAD' else '<branch>'} {MAIN_BRANCH}"
+        )
+    print(f"Checking out branch '{MAIN_BRANCH}' (was '{cur}') …")
+    r = run_git(repo, "checkout", "-q", MAIN_BRANCH, check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"Could not check out '{MAIN_BRANCH}':\n{r.stderr.strip()}")
 
 
-def ensure_branch(repo: Path, branch: str) -> bool:
-    """Checkout *branch*, creating it if it does not exist.
+def discard_failed_sync(repo: Path) -> None:
+    """Undo the file sync of an import that created no commit.
 
-    Returns True only if the branch was newly created by this call.
-
-    - Existing branch → ``git checkout NAME``
-    - New branch with existing commits → ``git checkout -b NAME``
-    - New branch in an empty repo (no HEAD) → ``git checkout -b NAME``
-      (Git will create the branch on the first commit)
-    """
-    branch = branch.strip()
-    if not branch:
-        raise SystemExit("--branch must not be empty")
-    if re.search(r"[\s~^:?*\[\\]", branch) or branch.startswith("-"):
-        raise SystemExit(f"Invalid branch name: {branch!r}")
-
-    # Already on the requested branch?
-    cur = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
-    if cur.returncode == 0 and cur.stdout.strip() == branch:
-        print(f"Already on branch '{branch}'")
-        return False
-
-    # Does the branch already exist?
-    if branch_exists(repo, branch):
-        print(f"Checking out existing branch '{branch}' …")
-        run_git(repo, "checkout", branch)
-        return False
-
-    # Create and switch.  Base the new branch on the *latest release* branch
-    # (not on whatever HEAD happens to be, which may be an old release).
-    if has_commits(repo):
-        base = latest_release_branch(repo)
-        if base:
-            print(f"Creating and checking out new branch '{branch}' from latest release '{base}' …")
-            run_git(repo, "checkout", "-b", branch, base)
-        else:
-            print(f"Creating and checking out new branch '{branch}' …")
-            run_git(repo, "checkout", "-b", branch)
-    else:
-        # Empty repo: set the symbolic ref so the first commit lands on this branch
-        print(f"Empty repository – first commit will create branch '{branch}' …")
-        run_git(repo, "checkout", "-b", branch, check=False)
-        # Some Git versions need: git symbolic-ref HEAD refs/heads/NAME
-        run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}", check=False)
-    return True
-
-
-def checked_out_ref(repo: Path) -> str | None:
-    """Name of the checked-out branch (also for an unborn one), else the HEAD sha."""
-    r = run_git(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False)
-    if r.returncode == 0 and r.stdout.strip():
-        return r.stdout.strip()
-    r = run_git(repo, "rev-parse", "--verify", "-q", "HEAD", check=False)
-    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
-
-
-def discard_created_branch(repo: Path, branch: str, previous: str | None, synced: bool) -> None:
-    """Remove a branch that this run created but that ended up without commits.
-
-    Goes back to the previously checked-out branch, removes the files the sync
-    wrote into the working tree (only when a sync really happened) and deletes
-    the branch.  Nothing is touched if the branch received commits.
+    Resets the working tree to the last commit and removes the untracked files
+    that the sync wrote.  ``main`` and the tags are never touched.
     """
     try:
-        if has_commits(repo) and previous and previous != branch:
-            run_git(repo, "checkout", "-f" if synced else "-q", previous)
-        elif not has_commits(repo) and previous and previous != branch:
-            run_git(repo, "symbolic-ref", "HEAD", f"refs/heads/{previous}", check=False)
-        if synced:
-            run_git(repo, "clean", "-fdq", check=False)  # untracked synced files
-        if branch_exists(repo, branch) and current_branch(repo) != branch:
-            run_git(repo, "branch", "-D", branch)
-        print(f"Deleted branch '{branch}' created for this import"
-              + (f"; back on '{previous}'." if previous else "."))
+        if has_commits(repo):
+            run_git(repo, "reset", "--hard", "-q", "HEAD")
+        run_git(repo, "clean", "-fdq", check=False)
+        print("No commit was created; the working tree is back at the last commit.")
     except subprocess.CalledProcessError as exc:
-        print(f"warning: could not delete branch '{branch}': "
-              f"{(exc.stderr or '').strip()} – remove it with 'git branch -D {branch}'",
+        print(f"warning: could not restore the working tree: "
+              f"{(exc.stderr or '').strip()} – use 'git reset --hard && git clean -fd'",
               file=sys.stderr)
 
 
