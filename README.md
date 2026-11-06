@@ -4,6 +4,10 @@ Sync a non-Git source directory (or archive) into a local Git repository and
 create one or more commits whose messages are written by an LLM via an
 OpenAI-compatible API.
 
+All commits go on **one branch named `main`** (GitHub compatible). Each import
+is marked with a **release tag** (the archive name, e.g. `013-llm-errors`).
+The tag message holds the description of that version.
+
 The tool is designed for reconstructing project history from a series of
 snapshots or old archives while keeping commits small, functionally coherent,
 and chronologically ordered by the original file modification times.
@@ -22,13 +26,42 @@ and chronologically ordered by the original file modification times.
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
 | **Output** | Plain text output, no progress bars. |
-| **Branch** | `--branch NAME` checks out or creates the branch before committing (import). When `--add` is an archive and `--branch` is omitted, the archive basename (without extension) is used automatically. After a successful import the tip of the release branch is also pointed to by a local `main` branch (any previous `main` is removed first) for GitHub compatibility; commits still land on the numbered release branch. With `--export`, `--branch NAME` selects the branch to export (overrides the active branch and any NAME given to `--export`). |
+| **Branch and tags** | All commits go on the single branch `main`. `--tag NAME` sets the release tag that marks the new tip after an import. When `--add` is an archive and `--tag` is omitted, the archive basename (without extension) is the tag name. The tag must not exist yet. The program never creates other branches. With `--export`, `--tag NAME` selects the release to export (overrides any NAME given to `--export`). |
 | **Ignored paths** | Bytecode caches (`__pycache__`, `*.pyc`, `*.pyo`) and common backup/editor files (`*~`, `*.bak`, `*.BAK`, `*.orig`, `*.swp`, `*.swo`, `*.tmp`, `#*#`) are never synced into the repository and never appear in commits. Existing copies in the repo are deleted so they show up as deletions. |
-| **Export** | `--export [NAME]` recreates a zip/tar from a branch (default: the active/checked-out branch; or `--branch NAME`). |
+| **Export** | `--export [NAME]` recreates a zip/tar from a release tag (default: the tip of `main`; or `--tag NAME`). |
 | **Dry-run** | `--dry-run` prints the planned commits without writing anything. |
+| **Description** | The release tag is an annotated tag. Its message is a short description of the version, written by the model from the changes of the README (or `--describe TEXT`). |
 
 ---
 
+
+## Release model: one branch, many tags
+
+```
+main:   o───o───o───o───o───o───o───o   (linear history, GitHub compatible)
+                │           │       │
+tags:    001-first   002-second   003-third
+```
+
+* The program uses **one branch only: `main`**. In a new repository, HEAD is set to `main`.
+* Each import adds its commits on top of the tip of `main`. The history stays linear.
+* After the commits, the program creates the **release tag** on the new tip. The tag name is the archive name without extension (or `--tag NAME`).
+* A release tag never moves and is never replaced. An import with a tag name that exists already is refused.
+* `--list` shows the tags. `--export` rebuilds an archive from a tag. `--revert` removes the newest tag and moves `main` back to the previous tag.
+* The name `main` cannot be a release tag.
+* The option `--branch` was removed. The program stops with an error when you give it.
+
+**Publish to GitHub:**
+
+```bash
+git -C /path/to/repo remote add origin <url>
+git -C /path/to/repo push -u origin main
+git -C /path/to/repo push origin --tags
+```
+
+**Older repositories.** A repository made by an older version (one branch per release, `main` as pointer) is not converted by the program. The program refuses to import when the repository has no branch `main`. To convert it by hand, create a tag on each release branch (`git tag NAME NAME^{commit}`), delete the release branches, and keep `main`. Old `desc/<branch>` tags can stay or be removed (`git tag -d`).
+
+---
 
 ## Requirements
 
@@ -93,35 +126,35 @@ python ai_git_commit.py \
 
 ### Export mode
 
-Requires only `--export` (and `--repo`, default `./repository`). **Does not** need `--url`, `--model`, `--add`, or `--name`. Optional: `--branch NAME` to pick the branch to export.
+Requires only `--export` (and `--repo`, default `./repository`). **Does not** need `--url`, `--model`, `--add`, or `--name`. Optional: `--tag NAME` to pick the release tag to export.
 
 ```bash
-# Active (checked-out) branch
+# Tip of main (the archive is named after the newest release tag at that commit)
 python ai_git_commit.py --repo /path/to/repo --export
 
-# Specific branch or archive name
+# Specific release tag or archive name
 python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors
 python ai_git_commit.py --repo /path/to/repo --export 013-llm-errors.zip
 
-# Via --branch (overrides the active branch and any NAME given to --export)
-python ai_git_commit.py --repo /path/to/repo --export --branch 013-llm-errors
+# Via --tag (overrides any NAME given to --export)
+python ai_git_commit.py --repo /path/to/repo --export --tag 013-llm-errors
 
 # Format and output path
 python ai_git_commit.py --repo /path/to/repo --export 014-clean-llm-err \
   --export-format tar.gz --export-output /tmp/out.tar.gz
 
-# Keep the top-level <branch>/ directory inside the archive
+# Keep the top-level <tag>/ directory inside the archive
 python ai_git_commit.py --repo /path/to/repo --export 014-clean-llm-err --no-strip
 ```
 
 The archive is written to the **current working directory** (not into the
 repository) unless `--export-output` is given. By default (`--strip`) the files
 are stored directly at the archive root; `--no-strip` wraps them in a single
-`<branch>/` directory.
+`<tag>/` directory.
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints **local release branches** only (same idea as `git branch`, not `git branch --all`). Remote-tracking refs (`remotes/origin/…`) are omitted, and so are the non-release branches `main` (GitHub-compatibility pointer at the latest tip) and `all`. The current branch is marked with `*`. Each listed branch that has a description tag (`desc/<branch>`, see "Branch description") is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. When writing to a terminal, the description is printed in **gray** and the current branch (`*` line) in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). **Error messages** (including command-line usage errors) are printed to stderr in **bright red** under the same terminal / `NO_COLOR` rules. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints the **release tags** (all tags of the repository, sorted by name). The tags that point at the checked-out commit (normally the newest release at the tip of `main`) are marked with `*`. Each annotated tag is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. A tag without description (lightweight tag) is listed without text. When writing to a terminal, the description is printed in **gray** and the marked (`*`) line in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). **Error messages** (including command-line usage errors) are printed to stderr in **bright red** under the same terminal / `NO_COLOR` rules. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -134,29 +167,30 @@ Import-only options given without `--add` (e.g. `--name`, `--dry-run`) are ignor
 
 ### Revert mode
 
-Requires no other option (`--repo` defaults to `./repository`). Removes the **last branch** – the one holding the most recent import – from the repository, e.g. to undo a bad import:
+Requires no other option (`--repo` defaults to `./repository`). Removes the **last release** – the newest release tag – from the repository and moves `main` back to the previous release, e.g. to undo a bad import:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --revert
 ```
 
-* "Last" is the branch with the highest leading number (`013-llm-errors` beats `012-…`); without numbered branches the branch whose tip is newest is used.
-* If that branch is checked out, the previous branch (the next one by the same rule) is checked out first, so the working tree returns to the previous release.
-* The branch is deleted with `git branch -D`. The output shows the tip commit, e.g. `Restore with: git -C repo branch 013-llm-errors <sha>`, so the removal can be undone.
-* Safety: the program refuses to remove the **only** branch, and refuses to run when the working tree has uncommitted or untracked changes (the message shows how to discard them, e.g. after a failed import).
+* "Last" is the tag with the highest leading number (`013-llm-errors` beats `012-…`); without numbered tags the newest tag is used.
+* The program deletes that tag and runs `git reset --hard` to the previous release tag. The working tree returns to the previous release.
+* The output shows the restore commands, e.g. `Restore with: git -C repo reset --hard <sha> && git -C repo tag 013-llm-errors <tag-object>`, so the removal can be undone (until `--cleanup` runs).
+* Safety: the program refuses to run when only **one** release tag exists, when `main` is not checked out, when `main` is not at the tip of the last release, when the previous release is not an ancestor of the last release, or when the working tree has uncommitted or untracked changes (the message shows how to discard them).
 * `--revert` cannot be combined with `--add`, `--export` or `--list` (error). Import-only options such as `--name` are ignored with a note on stderr. It never creates the repository.
 
-### Branch description (annotated tag)
+### Release description (annotated tag)
 
-After an import that created commits, the tip of the branch gets an **annotated tag** `desc/<branch>` (e.g. `desc/013-llm-errors`) whose message is the description of that version:
+After an import that created commits, the new tip of `main` gets the **release tag** (e.g. `013-llm-errors`). It is an **annotated tag**. Its message is the description of that version:
 
-* If the repository contains a description document in its root – `README*` first, then `conversation.*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total). The **only source is the diff of that document** between the previous tip and the new tip (for a first import: the whole document); commit messages and other files are not used. The description covers the **project changes**; it never mentions README, conversation, any document name, or the fact that a log was updated (prompt rule, one retry, and mentioning sentences are dropped). If the document did not change, or nothing is left after that, no tag is created (a note is printed).
+* If the repository contains a description document in its root – `README*` first, then `conversation.*`, `CHANGELOG*`, `CHANGES*`, `HISTORY*`, `NOTES*` (case-insensitive) – the model writes a description: a **short description** of ~50 words on a single line (cut at 70), then optionally a body with details (≤ 170 words in total). The **only source is the diff of that document** between the previous tip and the new tip (for a first import: the whole document); commit messages and other files are not used. The description covers the **project changes**; it never mentions README, conversation, any document name, or the fact that a log was updated (prompt rule, one retry, and mentioning sentences are dropped). If the document did not change, or nothing is left after that, the tag has no description: it is created as a **lightweight tag** (a note is printed).
 * The description is **plain text**: any markup the model produces (emphasis, backticks, headings, list markers, quotes, links, code fences) is removed; `--list` strips it from older tags as well.
 * `--describe TEXT` overrides this: TEXT is used as the tag message (no model call).
-* Without a description document and without `--describe` no tag is created (a note is printed).
-* Re-importing into an existing branch (`--branch NAME`) replaces its tag. `--dry-run` and imports without commits create nothing. A failure while creating the tag only prints a warning; the commits stay.
-* Read the descriptions with `git tag -n99 -l 'desc/*'`; `git show desc/<branch>`.
-* `--revert` removes the tag of the removed branch as well (otherwise it would keep the commits alive). The tag is local and not part of `--export`.
+* Without a description document and without `--describe` the tag is a lightweight tag (a note is printed).
+* A source directory without `--tag` creates commits but no release tag (a note is printed).
+* `--dry-run` and imports without commits create nothing. A failure while creating the tag only prints a warning and the command that creates it by hand; the commits stay.
+* Read the descriptions with `git tag -n99`; `git show <tag>`.
+* `--revert` removes the newest tag and moves `main` back. The tags are local until you push them (`git push origin --tags`) and are not part of `--export`.
 
 ### Omitting `--add`
 
@@ -166,11 +200,11 @@ After an import that created commits, the tip of the branch gets an **annotated 
 python ai_git_commit.py --url http://localhost:8080/v1 --name 'Botter <ai@localhost>' snapshot-2020.zip
 ```
 
-A note is printed. Giving both `--add X` and a stray path is an error, as is a stray path together with `--export`, `--revert`, `--cleanup` or `--list` (for `--export`, a word directly after it is the branch name).
+A note is printed. Giving both `--add X` and a stray path is an error, as is a stray path together with `--export`, `--revert`, `--cleanup` or `--list` (for `--export`, a word directly after it is the tag name).
 
 ### Cleanup mode
 
-Requires no other option (`--repo` defaults to `./repository`). Permanently deletes everything that no branch reaches any more, e.g. the commits of branches removed with `--revert`:
+Requires no other option (`--repo` defaults to `./repository`). Permanently deletes everything that no branch or tag reaches any more, e.g. the commits of releases removed with `--revert`:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --cleanup
@@ -178,7 +212,7 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 
 * Runs `git reflog expire --expire=now --all` and `git gc --prune=now` **without any confirmation**; it cannot be undone (the `Restore with:` hint printed by `--revert` stops working).
 * Output: number of unreachable commits/objects removed and the repository size before/after.
-* Affects only the local repository, and only unreachable data; all branches stay untouched (their reflog history is dropped, too).
+* Affects only the local repository, and only unreachable data; `main` and all tags stay untouched (their reflog history is dropped, too).
 * `--cleanup` cannot be combined with `--add`, `--export`, `--revert` or `--list` (error). Import-only options are ignored with a note. It never creates the repository.
 
 ### Arguments
@@ -191,17 +225,17 @@ python ai_git_commit.py --repo /path/to/repo --cleanup
 | `--add` | **yes** | no | Source directory **or** archive (`.zip` / `.tar*` …) |
 | `--name` | **yes** | no | Committer identity: `"Name <email@domain>"`; other forms are accepted too, see [Identity formats](#identity-formats) |
 | `--api-key` | no | no | API key (default: env `OPENAI_API_KEY`) |
-| `--branch` | no | no | Import: branch to commit on (default: archive basename when `--add` is an archive). Export: branch to export (overrides active branch / `--export` NAME) |
+| `--tag` | no | no | Import: release tag created on the new tip of `main` (default: archive basename when `--add` is an archive; must not exist yet). Export: release to export (overrides `--export` NAME). The old option `--branch` was removed. |
 | `--mention-archive` | no | no | Include archive filename in commit messages (default: off) |
-| `--describe` | no | no | Text for the branch description tag `desc/<branch>`; overrides the automatic summary from README / conversation… |
+| `--describe` | no | no | Text for the message of the release tag; overrides the automatic summary from README / conversation… |
 | `--dry-run` | no | no | Plan commits only; do not write |
-| `--export [NAME]` | no | **yes** | Export mode: recreate archive from branch (`NAME` optional = active/checked-out branch; or use `--branch`) |
+| `--export [NAME]` | no | **yes** | Export mode: recreate archive from a release tag (`NAME` optional = tip of `main`; or use `--tag`) |
 | `--export-format` | no | no | `zip` (default), `tar`, `tar.gz`, or `tgz` |
-| `--export-output` | no | no | Output path (default: `<branch>.zip` in the current directory, i.e. not inside the repository) |
-| `--revert` | no | no | Revert mode: remove the last branch from the repository (needs no other option; not combinable with `--add` / `--export` / `--list`) |
-| `--cleanup` | no | no | Cleanup mode: permanently delete all commits/objects no branch reaches (reflog expire + `gc --prune=now`), no confirmation; not combinable with `--add` / `--export` / `--revert` / `--list` |
-| `--list` | no | no | List mode: print local release branches only (hides `main`, `all`, and remote-tracking refs); needs no other option; this is the default when neither `--add` nor `--export` is given |
-| `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<branch>/` wrapper; `--no-strip` keeps that wrapper directory |
+| `--export-output` | no | no | Output path (default: `<tag>.zip` in the current directory, i.e. not inside the repository) |
+| `--revert` | no | no | Revert mode: remove the last release tag and move `main` back (needs no other option; not combinable with `--add` / `--export` / `--list`) |
+| `--cleanup` | no | no | Cleanup mode: permanently delete all commits/objects no branch or tag reaches (reflog expire + `gc --prune=now`), no confirmation; not combinable with `--add` / `--export` / `--revert` / `--list` |
+| `--list` | no | no | List mode: print the release tags with descriptions; needs no other option; this is the default when neither `--add` nor `--export` is given |
+| `--strip` / `--no-strip` | no | no | With `--export`: `--strip` (default) stores the files at the archive root without a top-level `<tag>/` wrapper; `--no-strip` keeps that wrapper directory |
 
 ### Example – rebuild history from old archives
 
@@ -265,10 +299,11 @@ resulting Git history is chronologically ordered.
 
 ### 2. Repository preparation (`ensure_git_repo`)
 
-- Path missing → `mkdir -p` + `git init`.
+- Path missing → `mkdir -p` + `git init`; HEAD is set to the branch `main`.
 - Path exists but is not a Git work tree → `git init` in place.
 - Otherwise verified with `git rev-parse --is-inside-work-tree`.
 - Refuses to continue if anything is already staged.
+- A repository with commits must have the branch `main`; the program checks it out when another branch or a detached HEAD is active. Without `main` it stops with the rename command.
 
 ### 3. Extra-directory-layer guard
 
@@ -342,11 +377,10 @@ no model involvement):
 **If any commit fails, all commits made by this run are reverted:** HEAD is
 reset to where it was before the first commit and the synced files are put
 back in the working tree (uncommitted); the program then exits with an error.
-A branch that this run created for the import is **deleted** again (the
-previously checked-out branch is checked out and the synced files are removed
-from the working tree). The same happens when an import ends without any commit
-(error before committing, `--dry-run`, "no changes"). Branches that already
-existed (`--branch NAME`) are never deleted.
+When an import ends without any commit (error before committing, rollback,
+`--dry-run`, "no changes"), the synced files are removed from the working tree
+again: the working tree is reset to the last commit and untracked files are
+deleted. `main` and the tags are never changed by a failed import.
 
 For every planned commit (small files / deletions are staged whole):
 
@@ -367,7 +401,11 @@ For each planned commit:
 ai_git_commit.py
 ├── CLI (argparse)
 ├── Identity parsing          parse_author()
-├── Repository bootstrap      ensure_git_repo()
+├── Repository bootstrap      ensure_git_repo(), ensure_main_branch()
+├── Release tags              validate_tag_name(), tag_exists(), list_release_tags(),
+│                             latest_release_tag(), tag_release(), list_tags()
+├── Revert                    revert_last_release(), discard_failed_sync()
+├── Export                    resolve_export_ref(), export_archive()
 ├── Source resolution         is_archive(), resolve_source(),
 │                             _strip_to_content_root()
 ├── Layout safety             detect_extra_directory_layer()
@@ -403,7 +441,7 @@ dependency. HTTP is handled solely by `requests`.
 
 ## License
 
-Copyright © Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz
+© Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz
 
 This program is free software under the **GNU General Public License v3.0**
 (or, at your option, any later version).  See the file `LICENSE` for the
@@ -412,21 +450,21 @@ full text.
 SPDX-License-Identifier: GPL-3.0-or-later
 
 
-### Branch base
+### History base
 
-A new branch (derived from the archive name or `--branch`) is created from the **latest release branch** (highest leading number, e.g. `017-…`; otherwise the branch with the newest commit), not from the currently checked-out branch.
+Every import commits on top of the tip of `main`. The program checks out `main` first when another branch or a detached HEAD (for example an old release tag) is active. The history is linear: the commits of release N+1 follow the commits of release N.
 
 ### Bytecode caches
 
-`__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The project also ships a `.gitignore` for them.
+`__pycache__/` and `*.pyc` / `*.pyo` are never synced or committed. Any that already exist in the repository are removed during sync (so they appear as a normal deletion in the next import). The archive does not contain a `.gitignore` (dot-files are not shipped); the program ignores these paths by itself.
 
 ### Model availability check
 
-Before the repository is touched (no branch created, no files synced, no commits) the program sends the test prompt `hi` to the model (a tiny completion, 32 tokens max). If the server is unreachable, the model is unavailable or the answer is malformed, the run aborts with a clear error and the repository content stays as it was (a repository that did not exist yet is still initialised empty first, as before). The check also runs with `--dry-run`, because that mode still asks the model for a commit plan. On success a line such as `model OK (reply: 'Hello! How can I help?')` is shown.
+Before the repository is touched (no checkout, no files synced, no commits) the program sends the test prompt `hi` to the model (a tiny completion, 32 tokens max). If the server is unreachable, the model is unavailable or the answer is malformed, the run aborts with a clear error and the repository content stays as it was (a repository that did not exist yet is still initialised empty first, as before). The check also runs with `--dry-run`, because that mode still asks the model for a commit plan. On success a line such as `model OK (reply: 'Hello! How can I help?')` is shown.
 
-### Existing branch check
+### Existing tag check
 
-If `--add` is an archive and no `--branch` is given, the branch name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a local branch with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass `--branch NAME` explicitly if you really want to add the contents to an existing branch. If an earlier import of the archive failed before committing anything, delete the leftover branch (`git branch -D NAME`) and run again. Directory sources are not affected.
+If `--add` is an archive and no `--tag` is given, the tag name is derived from the archive name without its extension (`013-llm-errors.zip` → `013-llm-errors`). When a tag with that name already exists, the import is refused with an error **before** anything is changed – no LLM call, no checkout, no sync, no commits (also with `--dry-run`). Rename the archive, or pass another name with `--tag NAME`. If an earlier import of the archive failed after the tag was made, delete the leftover tag (`git tag -d NAME`) and run again. The same check applies to `--tag NAME` with a directory source.
 
 ### Identity formats
 
@@ -443,17 +481,17 @@ If `--add` is an archive and no `--branch` is given, the branch name is derived 
 
 Only an empty value is rejected. Characters Git does not allow in identities (`<`, `>`, line breaks) are removed.
 
-### Branch output
+### Output after an import or export
 
-Nothing about branches is printed by default, with two exceptions:
+Nothing about tags or branches is printed by default, with two exceptions:
 
-* **After an import that created commits** the program prints just the name of the branch the commits went to (the last line of output, e.g. `013-llm-errors`). Nothing is printed for dry-runs and "no changes" runs.
-* **After an export** nothing branch-related is printed (only the `wrote …` line of the export itself).
+* **After an import that created a release tag** the program prints just the name of the tag (the last line of output, e.g. `013-llm-errors`). Nothing is printed for dry-runs, "no changes" runs and imports without a tag.
+* **After an export** nothing tag-related is printed (only the `Exporting …` and `wrote …` lines of the export itself).
 
-To see all branches use `--list` (see *List mode*).
+To see all releases use `--list` (see *List mode*).
 
 ### Export wrapper directory
 
-By default `--export` omits the `<branch>/` prefix so the archive contains the files directly at its root (`--strip`, on by default). `--no-strip` restores the previous layout with a single `<branch>/` top-level directory. Both options are only valid together with `--export`. Re-importing either layout works (the importer only strips wrappers if there are any).
+By default `--export` omits the `<tag>/` prefix so the archive contains the files directly at its root (`--strip`, on by default). `--no-strip` restores the previous layout with a single `<tag>/` top-level directory. Both options are only valid together with `--export`. Re-importing either layout works (the importer only strips wrappers if there are any).
 
 **Hunk staging.** Hunk commits are staged by writing the blob and updating the index directly (not with `git add`), so a hunk that keeps the file size (e.g. a typo fix) is staged even on file systems with unreliable ctime/inode data.
