@@ -1950,79 +1950,64 @@ def apply_commits(
         )
 
 
-def list_local_branches(repo: Path) -> list[str]:
-    """Return local branch names (without refs/heads/)."""
-    r = run_git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
-    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+def resolve_export_ref(repo: Path, name: str | None) -> tuple[str, str]:
+    """Resolve what to export; return ``(git_ref, label)``.
 
-
-def resolve_export_branch(repo: Path, name: str | None) -> str:
-    """Resolve which branch to export.
-
-    * ``None`` / ``__LAST__`` → the currently checked-out (active) branch;
-      falls back to the branch with the newest committer date if HEAD is
-      detached or unborn.
-    * Otherwise treat *name* as a branch name, or as an archive basename
-      (with or without extension) matching ``branch_name_from_archive``.
+    * ``None`` / ``__LAST__`` / ``main`` → the tip of ``main``.  The label is
+      the newest release tag at that commit (else ``main``).
+    * Otherwise *name* is a release tag, or an archive basename (with or
+      without extension) matching ``tag_name_from_archive``.
     """
-    branches = list_local_branches(repo)
-    if not branches:
-        raise SystemExit("No local branches found – nothing to export.")
+    if not has_commits(repo):
+        raise SystemExit("The repository has no commits – nothing to export.")
+    tags = list_release_tags(repo)
 
-    if name is None or name == "__LAST__":
-        # Prefer the active (checked-out) branch
-        active = checked_out_ref(repo)
-        if active and active in branches:
-            return active
-        # Detached HEAD or unborn: fall back to newest tip by committer date
-        r = run_git(
-            repo,
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            "refs/heads/",
-            check=False,
-        )
-        ordered = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
-        if ordered:
-            return ordered[0]
-        raise SystemExit("Could not determine the active branch to export.")
+    if name is None or name == "__LAST__" or name == MAIN_BRANCH:
+        ref = f"refs/heads/{MAIN_BRANCH}" if branch_exists(repo, MAIN_BRANCH) else "HEAD"
+        tip = run_git(repo, "rev-parse", ref).stdout.strip()
+        commits = tag_commits(repo)
+        here = {t for t, c in commits.items() if c == tip}
+        return ref, (latest_release_tag(repo, among=here) or MAIN_BRANCH)
 
-    # Exact branch match
-    if name in branches:
-        return name
+    if not tags:
+        raise SystemExit("No release tags found – nothing to export by name.")
+
+    # Exact tag match
+    if name in tags:
+        return f"refs/tags/{name}", name
 
     # Archive-style name → strip extension and match
-    candidate = branch_name_from_archive(Path(name))
-    if candidate in branches:
-        return candidate
+    candidate = tag_name_from_archive(Path(name))
+    if candidate in tags:
+        return f"refs/tags/{candidate}", candidate
 
     # Case-insensitive match
-    lower_map = {b.lower(): b for b in branches}
-    if name.lower() in lower_map:
-        return lower_map[name.lower()]
-    if candidate.lower() in lower_map:
-        return lower_map[candidate.lower()]
+    lower_map = {t.lower(): t for t in tags}
+    for key in (name.lower(), candidate.lower()):
+        if key in lower_map:
+            return f"refs/tags/{lower_map[key]}", lower_map[key]
 
     raise SystemExit(
-        f"No branch matching '{name}' (tried '{candidate}').\n"
-        f"  Available branches: {', '.join(branches)}"
+        f"No release tag matching '{name}' (tried '{candidate}').\n"
+        f"  Available release tags: {', '.join(tags)}"
     )
 
 
 def export_archive(
     repo: Path,
-    branch: str,
+    ref: str,
+    label: str,
     output: Path | None = None,
     fmt: str = "zip",
     prefix: str | None = None,
     strip: bool = True,
 ) -> Path:
-    """Recreate an archive from the tree at *branch* using ``git archive``.
+    """Recreate an archive from the tree at *ref* using ``git archive``.
 
-    By default (``strip=True``) the files are stored directly at the root of
-    the archive.  With ``strip=False`` they are placed below a single top-level
-    directory named after the branch.
+    *label* (a release tag name, or ``main``) names the archive file and the
+    optional top-level directory.  By default (``strip=True``) the files are
+    stored directly at the root of the archive.  With ``strip=False`` they are
+    placed below a single top-level directory named *label*.
 
     Returns the path of the written archive.
     """
