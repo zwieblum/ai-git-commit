@@ -2407,21 +2407,25 @@ def _main() -> None:
             "(Or use --export [NAME] to recreate an archive from the repo.)"
         )
 
-    # An archive whose name (without extension) matches an existing branch has
-    # already been imported (or clashes with another release): refuse before
-    # doing anything else.  An explicit --branch still lets you add to a branch.
+    # Release tag: an explicit --tag wins; otherwise it is derived from the
+    # archive name.  A release tag that already exists means the release was
+    # imported before (or clashes with another one): refuse before doing
+    # anything else.
     _src_path = args.add.expanduser().resolve()
-    if args.branch is None and is_archive(_src_path):
-        _derived = branch_name_from_archive(_src_path)
-        if branch_exists(args.repo, _derived):
+    tag = args.tag
+    tag_derived = False
+    if tag is None and is_archive(_src_path):
+        tag = tag_name_from_archive(_src_path)
+        tag_derived = True
+    if tag:
+        tag = validate_tag_name(tag)
+        if tag_exists(args.repo, tag):
             raise SystemExit(
-                f"Error: branch '{_derived}' already exists in {args.repo} – "
-                f"refusing to import archive '{_src_path.name}' again.\n"
-                "Rename the archive, or pass --branch NAME to add it to an "
-                "existing branch on purpose.\n"
-                f"(If an earlier import of this archive failed before anything "
-                f"was committed, remove the leftover branch with "
-                f"'git branch -D {_derived}' and try again.)"
+                f"Error: release tag '{tag}' already exists in {args.repo} – "
+                f"refusing to import '{_src_path.name}' again.\n"
+                "Rename the archive, or pass another name with --tag NAME.\n"
+                f"(If an earlier import of this archive failed after the tag was made, "
+                f"remove the leftover tag with 'git tag -d {tag}' and try again.)"
             )
 
     args.model = resolve_model(args.url, args.model, args.api_key)
