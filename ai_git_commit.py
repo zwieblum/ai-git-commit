@@ -534,11 +534,11 @@ def _repo_size_kib(repo: Path) -> int:
 
 
 def cleanup_repository(repo: Path) -> None:
-    """Permanently delete everything no branch can reach any more.
+    """Permanently delete everything no branch or tag can reach any more.
 
     Expires the whole reflog and prunes unreachable objects immediately
     (``git reflog expire --expire=now --all`` + ``git gc --prune=now``), so
-    commits of deleted/reverted branches are gone for good.  No confirmation.
+    commits of reverted releases are gone for good.  No confirmation.
     """
     require_git_repo(repo)
     before = _repo_size_kib(repo)
