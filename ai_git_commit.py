@@ -2460,6 +2460,7 @@ def _main() -> None:
 
     committed = False
     synced = False
+    release_tag: str | None = None
     try:
         with resolve_source(args.add) as effective_src:
             if not effective_src.is_dir():
