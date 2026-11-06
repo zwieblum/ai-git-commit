@@ -2240,10 +2240,10 @@ def _main() -> None:
     revert_opts.add_argument(
         "--revert",
         action="store_true",
-        help="Remove the last branch from the repository (the one holding the "
-        "most recent import: highest numeric prefix, else newest tip).  If it "
-        "is checked out, the previous branch is checked out first.  Refuses "
-        "to remove the only branch or to run with uncommitted changes.",
+        help="Remove the last release: delete its tag (the most recent "
+        "import: highest numeric prefix, else newest) and move main back to "
+        "the previous release tag.  Refuses to remove the only release tag, "
+        "to run with uncommitted changes, or when main is not at that tag.",
     )
     cleanup_opts = parser.add_argument_group(
         "cleanup mode (needs no other option; cannot be combined with --add / --export / --revert / --list)"
