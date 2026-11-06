@@ -216,19 +216,25 @@ def require_git_repo(repo: Path) -> None:
         raise SystemExit(f"Not a valid Git working tree: {repo}")
 
 
-def branch_descriptions(repo: Path) -> dict[str, str]:
-    """Map branch name → short description (first paragraph, as one line) of its
-    ``desc/<branch>`` annotated tag."""
+MAIN_BRANCH = "main"   # the only branch; GitHub compatible
+
+
+def tag_descriptions(repo: Path) -> dict[str, str]:
+    """Map release tag name → short description (first paragraph, as one line)
+    of its annotated tag.  Lightweight tags have no description."""
     r = run_git(
-        repo, "for-each-ref", f"refs/tags/{TAG_PREFIX}",
-        "--format=%(refname)%09%(contents:subject)", check=False,
+        repo, "for-each-ref", "refs/tags/",
+        "--format=%(refname)%09%(objecttype)%09%(contents:subject)", check=False,
     )
     out: dict[str, str] = {}
-    prefix = f"refs/tags/{TAG_PREFIX}"
+    prefix = "refs/tags/"
     for line in r.stdout.splitlines():
-        ref, _, subject = line.partition("\t")
-        subject = clean_subject(strip_markup(subject))  # also fixes tags created by older versions
-        if ref.startswith(prefix) and subject:
+        ref, _, rest = line.partition("\t")
+        kind, _, subject = rest.partition("\t")
+        if kind != "tag" or not ref.startswith(prefix):
+            continue
+        subject = clean_subject(strip_markup(subject))
+        if subject:
             out[ref[len(prefix):]] = subject
     return out
 
