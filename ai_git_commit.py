@@ -768,8 +768,8 @@ def is_archive(path: Path) -> bool:
     return path.is_file() and any(name.endswith(s) for s in ARCHIVE_SUFFIXES)
 
 
-def branch_name_from_archive(path: Path) -> str:
-    """Derive a Git branch name from an archive filename (strip known extensions)."""
+def tag_name_from_archive(path: Path) -> str:
+    """Derive a release tag name from an archive filename (strip known extensions)."""
     name = path.name
     lower = name.lower()
     # Strip longest matching archive suffix first (e.g. .tar.gz before .gz)
