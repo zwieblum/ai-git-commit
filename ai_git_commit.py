@@ -2265,10 +2265,10 @@ def _main() -> None:
         const="__LAST__",
         default=None,
         metavar="NAME",
-        help="Export mode: recreate archive from branch. "
-        "Omit NAME to export the active (checked-out) branch; "
-        "NAME may be a branch or archive basename (e.g. 013-llm-errors[.zip]). "
-        "With --branch NAME, that branch is exported instead",
+        help="Export mode: recreate archive from a release tag. "
+        "Omit NAME to export the tip of main; "
+        "NAME may be a release tag or archive basename (e.g. 013-llm-errors[.zip]). "
+        "With --tag NAME, that release is exported instead",
     )
     export_opts.add_argument(
         "--export-format",
