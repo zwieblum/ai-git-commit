@@ -2049,7 +2049,7 @@ def export_archive(
         f"--format={git_format}",
         *([f"--prefix={prefix}"] if prefix else []),
         f"--output={output}",
-        branch,
+        ref,
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
