@@ -2281,17 +2281,23 @@ def _main() -> None:
         type=Path,
         default=None,
         metavar="PATH",
-        help="Output file or directory for --export (default: <branch>.zip in cwd)",
+        help="Output file or directory for --export (default: <tag>.zip in cwd)",
     )
     export_opts.add_argument(
         "--strip",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="With --export: strip all directories from the archive, i.e. do "
-        "not wrap the files in a top-level <branch>/ directory (default: on). "
-        "Use --no-strip to keep the <branch>/ directory",
+        "not wrap the files in a top-level <tag>/ directory (default: on). "
+        "Use --no-strip to keep the <tag>/ directory",
     )
     args = parser.parse_intermixed_args()
+
+    if args.branch is not None:
+        parser.error(
+            "--branch was removed: all commits go on the branch 'main' and each "
+            "release is a tag.  Use --tag NAME instead."
+        )
 
     # A stray path without --add means "--add PATH".
     if args.source is not None:
