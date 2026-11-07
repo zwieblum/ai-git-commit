@@ -266,13 +266,23 @@ def print_error(msg: str) -> None:
     print(red(str(msg)), file=sys.stderr)
 
 
+def _release_sort_key(name: str) -> tuple[int, int, str]:
+    """Sort key: tags without a number first, then by release number (oldest
+    first, newest last).  An old ``desc/013-x`` tag counts as number 13."""
+    m = re.match(r"^(?:desc/)?(\d+)", name)
+    return (1, int(m.group(1)), name) if m else (0, 0, name)
+
+
 def list_release_tags(repo: Path) -> list[str]:
-    """Return all tag names (the release tags), sorted by name."""
-    r = run_git(repo, "for-each-ref", "--sort=refname", "--format=%(refname)",
-                "refs/tags/", check=False)
+    """Return all tag names that can be releases, oldest release first.
+
+    A tag named ``main`` is never a release (it would clash with the branch).
+    """
+    r = run_git(repo, "for-each-ref", "--format=%(refname)", "refs/tags/", check=False)
     prefix = "refs/tags/"
-    return [ln.strip()[len(prefix):] for ln in r.stdout.splitlines()
-            if ln.strip().startswith(prefix)]
+    names = [ln.strip()[len(prefix):] for ln in r.stdout.splitlines()
+             if ln.strip().startswith(prefix)]
+    return sorted((n for n in names if n != MAIN_BRANCH), key=_release_sort_key)
 
 
 def tag_commits(repo: Path) -> dict[str, str]:
