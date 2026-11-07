@@ -5,7 +5,8 @@ create one or more commits with LLM-generated messages.
 
 All commits go on ONE branch named "main" (GitHub compatible).  Each import is
 marked with a release TAG (the archive name); the tag message holds the
-description of that version.
+description of that version.  Repositories of the old format (one branch per
+release, ``desc/<name>`` tags) are converted automatically.
 
 Changes are grouped into functionally coherent commits (the model plans; large files are split hunk by hunk by the program). Each commit's total
 changed lines (insertions + deletions) is kept at or below 200 when possible.
