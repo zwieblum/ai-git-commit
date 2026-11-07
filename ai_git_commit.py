@@ -2579,12 +2579,14 @@ def _main() -> None:
             parser.error("--list cannot be combined with --export or --add")
         note_ignored("listing release tags")
         require_git_repo(args.repo)
+        migrate_old_repository(args.repo)
         list_tags(args.repo)
         return
 
     # ----- export mode -----
     if args.export is not None:
         require_git_repo(args.repo)  # validate without auto-creating
+        migrate_old_repository(args.repo)
         # --tag NAME wins; else --export NAME; else the tip of main
         if args.tag is not None:
             ref, label = resolve_export_ref(args.repo, args.tag)
