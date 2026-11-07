@@ -673,7 +673,9 @@ def _tags_newest_first(repo: Path) -> list[str]:
     )
     prefix = "refs/tags/"
     names = [ln.strip()[len(prefix):] for ln in r.stdout.splitlines()
-             if ln.strip().startswith(prefix)]
+             if ln.strip().startswith(prefix)
+             and ln.strip()[len(prefix):] != MAIN_BRANCH
+             and not ln.strip()[len(prefix):].startswith(OLD_DESC_PREFIX)]
     numbered: list[tuple[int, str]] = []
     others: list[str] = []
     for n in names:
