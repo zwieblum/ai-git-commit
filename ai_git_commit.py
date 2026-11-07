@@ -2605,6 +2605,7 @@ def _main() -> None:
         return
 
     ensure_git_repo(args.repo)
+    migrate_old_repository(args.repo, dry_run=args.dry_run)
 
     # ----- import mode -----
     missing = [
