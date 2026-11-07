@@ -729,6 +729,195 @@ def validate_tag_name(tag: str) -> str:
     return tag
 
 
+OLD_DESC_PREFIX = "desc/"   # description tags of the old (branch) format
+
+
+def _ref_sha(repo: Path, ref: str) -> str:
+    """Object name *ref* resolves to, or "" when it does not exist."""
+    r = run_git(repo, "rev-parse", "-q", "--verify", ref, check=False)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    return run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant,
+                   check=False).returncode == 0
+
+
+def _make_tag(
+    repo: Path, name: str, commit: str, message: str | None,
+    tagger: tuple[str, str, str] | None = None, force: bool = False,
+) -> None:
+    """Create tag *name* on *commit*: annotated when *message* is given (with
+    the old tagger name, e-mail and date when known), else lightweight."""
+    env = os.environ.copy()
+    if message is not None and tagger:
+        tname, temail, tdate = tagger
+        env.update(GIT_COMMITTER_NAME=tname or "unknown",
+                   GIT_COMMITTER_EMAIL=temail or "unknown@localhost")
+        if tdate:
+            env["GIT_COMMITTER_DATE"] = tdate
+    cmd = ["git", "-C", str(repo), "tag"]
+    if force:
+        cmd.append("-f")
+    if message is not None:
+        cmd += ["-a", "-F", "-", name, commit]
+    else:
+        cmd += [name, commit]
+    r = subprocess.run(cmd, input=(message + "\n") if message is not None else None,
+                       text=True, capture_output=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip())
+
+
+def migrate_old_repository(repo: Path, dry_run: bool = False) -> bool:
+    """Convert a repository of the old format to the tag format.
+
+    Old format: one release branch per import (``013-name``), a description tag
+    ``desc/013-name`` for each, and a pointer branch ``main``.  New format: the
+    single branch ``main`` plus one release tag per release.
+
+    1. Each ``desc/X`` tag becomes the release tag ``X`` (same commit, same
+       message and tagger) and is deleted.  A tag ``X`` that points to another
+       commit is kept untouched, with a warning.
+    2. Each old release branch ``X`` whose tip is part of ``main`` gets a tag
+       ``X`` (if missing) and is deleted, so that no commit is lost.
+    3. A tag named ``main`` is deleted when its commit is part of ``main``.
+
+    Prints every change with the command that restores it.  With *dry_run*
+    nothing is changed.  Returns True when something had to be converted.
+    """
+    prefix = f"refs/tags/{OLD_DESC_PREFIX}"
+    r = run_git(repo, "for-each-ref", "--format=%(refname)", prefix, check=False)
+    old_tags = sorted((ln.strip()[len(prefix):] for ln in r.stdout.splitlines() if ln.strip()),
+                      key=_release_sort_key)
+    r = run_git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/", check=False)
+    branches = [ln.strip()[len("refs/heads/"):] for ln in r.stdout.splitlines() if ln.strip()]
+    old_branches = [b for b in branches
+                    if b != MAIN_BRANCH and (re.match(r"^\d+", b) or b in old_tags)]
+    has_main_tag = tag_exists(repo, MAIN_BRANCH)
+    if not (old_tags or old_branches or has_main_tag):
+        return False
+
+    pre = "(dry-run) would " if dry_run else ""
+    changed = False
+    started = False
+
+    def start() -> None:
+        """Print the header once, before the first message."""
+        nonlocal started
+        if not started:
+            started = True
+            print(f"Old repository format found – converting to one branch '{MAIN_BRANCH}' "
+                  f"+ release tags" + (" (dry-run: nothing is changed)" if dry_run else "") + " …")
+
+    def say(msg: str) -> None:
+        start()
+        print(msg)
+
+    def warn(msg: str) -> None:
+        start()
+        print(f"  warning: {msg}", file=sys.stderr)
+
+    # 1) desc/X tags → release tags X
+    planned: dict[str, str] = {}   # tags made (or planned in a dry-run) here
+    for x in old_tags:
+        if x == MAIN_BRANCH:
+            warn(f"tag '{OLD_DESC_PREFIX}{x}' skipped: '{MAIN_BRANCH}' cannot be a release tag")
+            continue
+        old_ref, new_ref = f"refs/tags/{OLD_DESC_PREFIX}{x}", f"refs/tags/{x}"
+        commit = _ref_sha(repo, f"{old_ref}^{{commit}}")
+        if not commit:
+            warn(f"tag '{OLD_DESC_PREFIX}{x}' does not point to a commit – kept")
+            continue
+        existing = _ref_sha(repo, f"{new_ref}^{{commit}}")
+        if existing and existing != commit:
+            warn(f"tag '{x}' points to another commit than '{OLD_DESC_PREFIX}{x}' – both kept")
+            continue
+        info = run_git(
+            repo, "for-each-ref",
+            "--format=%(objecttype)%09%(taggername)%09%(taggeremail)%09%(taggerdate:raw)",
+            old_ref).stdout.rstrip("\n").split("\t")
+        kind, tname, temail, tdate = (info + [""] * 4)[:4]
+        old_obj = _ref_sha(repo, old_ref)
+        existing_kind = run_git(repo, "for-each-ref", "--format=%(objecttype)", new_ref
+                                ).stdout.strip() if existing else ""
+        try:
+            if kind == "tag" and existing_kind != "tag":
+                message = run_git(repo, "for-each-ref", "--format=%(contents)", old_ref
+                                  ).stdout.rstrip("\n")
+                say(f"  {pre}convert tag '{OLD_DESC_PREFIX}{x}' → '{x}'")
+                if not dry_run:
+                    _make_tag(repo, x, commit, message,
+                              (tname, temail.strip("<>"), tdate), force=bool(existing))
+            elif kind != "tag" and not existing:
+                say(f"  {pre}convert tag '{OLD_DESC_PREFIX}{x}' → '{x}'")
+                if not dry_run:
+                    _make_tag(repo, x, commit, None)
+            else:
+                say(f"  {pre}remove duplicate tag '{OLD_DESC_PREFIX}{x}' (tag '{x}' exists)")
+            if not dry_run:
+                run_git(repo, "tag", "-d", f"{OLD_DESC_PREFIX}{x}")
+            planned[x] = commit
+            say(f"    restore: git -C {repo} tag {OLD_DESC_PREFIX}{x} {old_obj}")
+            changed = True
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            detail = getattr(exc, "stderr", None) or str(exc)
+            warn(f"could not convert tag '{OLD_DESC_PREFIX}{x}': {detail.strip()}")
+
+    # 2) old release branches → tags; branches are removed only when main has them
+    main_sha = _ref_sha(repo, f"refs/heads/{MAIN_BRANCH}")
+    if old_branches and not main_sha:
+        warn(f"no branch '{MAIN_BRANCH}': the old release branches are kept")
+    for b in (old_branches if main_sha else []):
+        tip = _ref_sha(repo, f"refs/heads/{b}")
+        if not tip or not _is_ancestor(repo, tip, main_sha):
+            warn(f"branch '{b}' is not part of '{MAIN_BRANCH}' – kept")
+            continue
+        existing = _ref_sha(repo, f"refs/tags/{b}^{{commit}}") or planned.get(b, "")
+        if existing and existing != tip:
+            warn(f"tag '{b}' points to another commit than branch '{b}' – branch kept")
+            continue
+        try:
+            if not existing:
+                say(f"  {pre}create tag '{b}' on the tip of branch '{b}'")
+                if not dry_run:
+                    _make_tag(repo, b, tip, None)
+            if current_branch(repo) == b:
+                say(f"  {pre}check out '{MAIN_BRANCH}' (was '{b}')")
+                if not dry_run:
+                    c = run_git(repo, "checkout", "-q", MAIN_BRANCH, check=False)
+                    if c.returncode != 0:
+                        warn(f"could not check out '{MAIN_BRANCH}': {c.stderr.strip()} – "
+                             f"branch '{b}' kept")
+                        continue
+            say(f"  {pre}remove old release branch '{b}'")
+            if not dry_run:
+                run_git(repo, "update-ref", "-d", f"refs/heads/{b}", tip)
+            say(f"    restore: git -C {repo} branch {b} {tip}")
+            changed = True
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            detail = getattr(exc, "stderr", None) or str(exc)
+            warn(f"could not convert branch '{b}': {detail.strip()}")
+
+    # 3) a tag named "main" clashes with the branch "main"
+    if has_main_tag:
+        tag_sha = _ref_sha(repo, f"refs/tags/{MAIN_BRANCH}^{{commit}}")
+        tag_obj = _ref_sha(repo, f"refs/tags/{MAIN_BRANCH}")
+        if main_sha and tag_sha and _is_ancestor(repo, tag_sha, main_sha):
+            say(f"  {pre}remove tag '{MAIN_BRANCH}' (same name as the branch)")
+            if not dry_run:
+                run_git(repo, "tag", "-d", MAIN_BRANCH)
+            say(f"    restore: git -C {repo} tag {MAIN_BRANCH} {tag_obj}")
+            changed = True
+        else:
+            warn(f"tag '{MAIN_BRANCH}' is not part of branch '{MAIN_BRANCH}' – kept; "
+                 f"remove it with 'git -C {repo} tag -d {MAIN_BRANCH}' when it is not needed")
+
+    if changed:
+        say("Conversion " + ("planned." if dry_run else "finished."))
+    return changed
+
+
 def ensure_main_branch(repo: Path) -> None:
     """Make sure the checked-out branch is ``main``.
 
