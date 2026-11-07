@@ -447,3 +447,26 @@ I read the code and made a plan. One branch only: `main`. Each import creates a 
 **Assistant:**
 
 The plan was approved. Changes made in `ai_git_commit.py`: all commits go on `main`; the release tag (archive name or `--tag NAME`) is created on the new tip; an existing tag refuses the import; `--branch` stops with an error; `--list` prints tags with descriptions; `--export` reads a tag (default: tip of `main`); `--revert` deletes the newest tag and moves `main` back; a failed import restores the working tree; `ensure_github_main`, `ensure_branch`, `discard_created_branch` and the `all` handling are removed. I tested import, list, export, revert, errors, dry-run, directory source and detached HEAD with a mock model server. `README.md` and `CHANGELOG` are updated.
+
+---
+
+**User:**
+
+* can this program push to github and force a sync of the local repository? (uploaded the script `to-github`)
+* is this better? (uploaded a changed `to-github`)
+* please post a changed program in the chat.
+
+**Assistant:**
+
+The program does not push. The script does. The default branch must be `main`. A full sync needs one prune push: `git push --prune --force origin 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'`. I posted the changed script.
+
+---
+
+**User:**
+
+* back to the program. "--list" lists all tags but the last (newest) one. The output shows `desc/047-...` to `desc/051-...` and `main`. `git show-ref main` shows a branch `main`, a remote `origin/main` and a tag `main`.
+* when the program hits an old repository with "desc/", change the old tags to new format.
+
+**Assistant:**
+
+The cause was the old format. The old `desc/...` tags and a tag `main` were in the list. The newest tag `052-...` sorted above them. I made a plan and the user approved it. Changes: the program converts `desc/X` tags and old release branches to release tags, deletes a tag `main` that is part of the branch `main`, sorts `--list` by release number, and prints the restore commands. I also fixed `current_branch` for a tag with the same name as the branch. I tested the conversion with a repository made by the original program (051).
