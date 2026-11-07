@@ -2560,12 +2560,16 @@ def _main() -> None:
     # ----- cleanup mode -----
     if args.cleanup:
         note_ignored("cleaning up the repository")
+        require_git_repo(args.repo)
+        migrate_old_repository(args.repo)
         cleanup_repository(args.repo)
         return
 
     # ----- revert mode -----
     if args.revert:
         note_ignored("reverting the last release")
+        require_git_repo(args.repo)
+        migrate_old_repository(args.repo)
         revert_last_release(args.repo)
         return
 
