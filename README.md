@@ -26,6 +26,7 @@ and chronologically ordered by the original file modification times.
 | **Size limit** | Tries to keep each commit ≤ **200 changed lines** (insertions + deletions). A single oversized file is committed alone. |
 | **Chronological dates** | Author and committer dates are taken from the newest modification time of the files in that commit (preserved from `--add` / the archive). |
 | **Output** | Plain text output, no progress bars. |
+| **Old repositories** | A repository of the old format (one branch per release, `desc/<name>` tags) is converted to the tag format automatically (see *Release model*). |
 | **Branch and tags** | All commits go on the single branch `main`. `--tag NAME` sets the release tag that marks the new tip after an import. When `--add` is an archive and `--tag` is omitted, the archive basename (without extension) is the tag name. The tag must not exist yet. The program never creates other branches. With `--export`, `--tag NAME` selects the release to export (overrides any NAME given to `--export`). |
 | **Ignored paths** | Bytecode caches (`__pycache__`, `*.pyc`, `*.pyo`) and common backup/editor files (`*~`, `*.bak`, `*.BAK`, `*.orig`, `*.swp`, `*.swo`, `*.tmp`, `#*#`) are never synced into the repository and never appear in commits. Existing copies in the repo are deleted so they show up as deletions. |
 | **Export** | `--export [NAME]` recreates a zip/tar from a release tag (default: the tip of `main`; or `--tag NAME`). |
@@ -48,7 +49,7 @@ tags:    001-first   002-second   003-third
 * After the commits, the program creates the **release tag** on the new tip. The tag name is the archive name without extension (or `--tag NAME`).
 * A release tag never moves and is never replaced. An import with a tag name that exists already is refused.
 * `--list` shows the tags. `--export` rebuilds an archive from a tag. `--revert` removes the newest tag and moves `main` back to the previous tag.
-* The name `main` cannot be a release tag.
+* The name `main` cannot be a release tag. A tag named `main` is ignored in `--list`, `--revert` and `--export`.
 * The option `--branch` was removed. The program stops with an error when you give it.
 
 **Publish to GitHub:**
@@ -59,7 +60,13 @@ git -C /path/to/repo push -u origin main
 git -C /path/to/repo push origin --tags
 ```
 
-**Older repositories.** A repository made by an older version (one branch per release, `main` as pointer) is not converted by the program. The program refuses to import when the repository has no branch `main`. To convert it by hand, create a tag on each release branch (`git tag NAME NAME^{commit}`), delete the release branches, and keep `main`. Old `desc/<branch>` tags can stay or be removed (`git tag -d`).
+**Older repositories (automatic conversion).** A repository of the old format has one branch per release (`013-name`), a description tag `desc/013-name` for each, and a pointer branch `main`. The program converts such a repository by itself. It checks for the old format every time it opens a repository, in all modes (`--list`, `--export`, `--revert`, `--cleanup` and imports).
+
+1. Each `desc/X` tag becomes the annotated release tag `X` on the same commit. The message, tagger name, tagger e-mail and tagger date stay the same. Then the program deletes `desc/X`. If a tag `X` exists on the same commit, the program keeps it (a lightweight tag gets the description). If `X` points to another commit, the program keeps both tags and prints a warning.
+2. Each old release branch `X` (a name that starts with a number, or a name that has a `desc/X` tag) gets a lightweight tag `X` if it has none. Then the program deletes the branch, but only when its tip is already part of `main`. So no commit is lost. Other branches stay, with a warning. If the old branch is checked out, the program checks out `main` first.
+3. A tag named `main` is deleted when its commit is part of the branch `main`. Tag and branch with the same name cause "ambiguous" warnings in Git. A tag `main` is never used as a release.
+
+The program prints every change, with the command that restores the old ref. With `--dry-run` (import mode) it only prints what it would do. After the conversion, the program prints nothing more about it. The conversion changes only the local repository. To change GitHub too, push with `git push --prune --force origin 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'`. This deletes the old branches and tags there.
 
 ---
 
@@ -154,7 +161,7 @@ are stored directly at the archive root; `--no-strip` wraps them in a single
 
 ### List mode
 
-Requires no other option (`--repo` defaults to `./repository`). Prints the **release tags** (all tags of the repository, sorted by name). The tags that point at the checked-out commit (normally the newest release at the tip of `main`) are marked with `*`. Each annotated tag is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. A tag without description (lightweight tag) is listed without text. When writing to a terminal, the description is printed in **gray** and the marked (`*`) line in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). **Error messages** (including command-line usage errors) are printed to stderr in **bright red** under the same terminal / `NO_COLOR` rules. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
+Requires no other option (`--repo` defaults to `./repository`). Prints the **release tags** (all tags of the repository, sorted by release number: the oldest first, the newest last). The tags that point at the checked-out commit (normally the newest release at the tip of `main`) are marked with `*`. Each annotated tag is followed by its **short description** (the first paragraph of the tag message, ~50 words, on one line), e.g. `  013-llm-errors  Adds retry handling for LLM errors, …`. A tag without description (lightweight tag) is listed without text. When writing to a terminal, the description is printed in **gray** and the marked (`*`) line in **light green** (ANSI escape sequences; disabled when the output is piped/redirected or the `NO_COLOR` environment variable is set). **Error messages** (including command-line usage errors) are printed to stderr in **bright red** under the same terminal / `NO_COLOR` rules. List mode is the **default**: whenever neither `--add` nor `--export` is given, `--list` is assumed:
 
 ```bash
 python ai_git_commit.py --repo /path/to/repo --list
@@ -405,6 +412,7 @@ ai_git_commit.py
 ├── Release tags              validate_tag_name(), tag_exists(), list_release_tags(),
 │                             latest_release_tag(), tag_release(), list_tags()
 ├── Revert                    revert_last_release(), discard_failed_sync()
+├── Old repositories          migrate_old_repository()  (desc/ tags and release branches → tags)
 ├── Export                    resolve_export_ref(), export_archive()
 ├── Source resolution         is_archive(), resolve_source(),
 │                             _strip_to_content_root()

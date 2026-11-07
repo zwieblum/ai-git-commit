@@ -2,6 +2,22 @@
 
 © Dr. Nikolaus Klepp - office@klepp.biz - https://klepp.biz
 
+## 053 - convert-old-repos (2026-11-07)
+
+Added: automatic conversion of repositories of the old format.
+
+- The program checks for the old format every time it opens a repository (all modes). With `--dry-run` it prints the plan only.
+- Each `desc/X` tag becomes the annotated release tag `X` (same commit, message, tagger name, e-mail and date). Then `desc/X` is deleted. A tag `X` on another commit is kept, with a warning.
+- Each old release branch is replaced by a tag. The branch is deleted only when its tip is part of `main`.
+- A tag named `main` is deleted when its commit is part of the branch `main`. The program never uses a tag `main` as a release.
+- Every change is printed with the command that restores it.
+- `--list` sorts the tags by release number: oldest first, newest last. `desc/051-x` counts as number 51.
+
+Fixed:
+
+- `current_branch` returned `heads/NAME` when a tag had the same name as the branch. The program did not see the checked-out branch then. It now reads the full ref name.
+- `--list` showed the old `desc/...` tags below the newest tag, and the tag `main` as a release.
+
 ## 052 - use-tags-not-branch (2026-11-06)
 
 Changed: the program now uses tags instead of branches.
