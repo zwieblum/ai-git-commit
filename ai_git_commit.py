@@ -330,8 +330,16 @@ def list_tags(repo: Path) -> None:
 
 
 def current_branch(repo: Path) -> str:
-    r = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
-    return r.stdout.strip() if r.returncode == 0 else ""
+    """Name of the checked-out branch; ``HEAD`` when detached.
+
+    Uses the full ref name, because ``rev-parse --abbrev-ref`` returns
+    ``heads/NAME`` when a tag has the same name as the branch.
+    """
+    r = run_git(repo, "symbolic-ref", "-q", "HEAD", check=False)
+    if r.returncode != 0:
+        return "HEAD" if has_commits(repo) else ""
+    ref = r.stdout.strip()
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
 
 
 # Documents that describe a release, in priority order (file stem, any extension).
